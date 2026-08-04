@@ -1246,12 +1246,24 @@ def do_calendar_poll(override_ids: list[str] | None) -> None:
         return
     payload, auth_failed = poll_calendar(token, override_ids)
     if auth_failed:
-        client = _read_google_client()
-        tok = _read_google_token()
-        if client and tok:
-            new_token = _refresh_google_token(tok, client)
+        global _service_account_token
+        if _service_account_token:
+            # Google 401'd a token our own expiry check still thought was
+            # valid (revoked key, clock skew, key rotation) -- without this,
+            # every poll until expires_at naturally lapses would keep
+            # handing out the same stale cached token and 401 again, a
+            # silent stall rather than a retry.
+            _service_account_token = {}
+            new_token = read_google_calendar_token()
             if new_token:
                 payload, _ = poll_calendar(new_token, override_ids)
+        else:
+            client = _read_google_client()
+            tok = _read_google_token()
+            if client and tok:
+                new_token = _refresh_google_token(tok, client)
+                if new_token:
+                    payload, _ = poll_calendar(new_token, override_ids)
     if payload is not None:
         calendar_state.set_payload(payload)
         if payload.get("events"):
