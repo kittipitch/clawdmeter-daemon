@@ -117,8 +117,12 @@ API_BODY = {
 # create an OAuth client first (Google Cloud Console has no equivalent of
 # setup-token) — see --calendar-auth's printed instructions.
 #
-# Two files, both flat in $HOME to match this daemon's existing convention
-# (~/.clawdmeter-daemon.json, ~/.clawdmeter-daemon.log):
+# Two auth methods, both flat in $HOME to match this daemon's existing convention
+# (~/.clawdmeter-daemon.json, ~/.clawdmeter-daemon.log). Service account is
+# preferred (see GOOGLE_SERVICE_ACCOUNT_PATH below and clawdmeter-daemon/README.md)
+# — the OAuth Desktop-app flow works but its refresh token expires after 7 days
+# unless the GCP project is published to Production, which isn't always possible
+# (e.g. another OAuth client in the same project has a non-HTTPS redirect URI).
 #   ~/.clawdmeter-google-client.json  - {"client_id":..,"client_secret":..}, YOU provide
 #                                        this (Google Cloud Console OAuth client,
 #                                        type "Desktop app"). Never written by this code.
@@ -127,6 +131,15 @@ API_BODY = {
 #                                        after that.
 GOOGLE_CLIENT_PATH = Path.home() / ".clawdmeter-google-client.json"
 GOOGLE_TOKEN_PATH = Path.home() / ".clawdmeter-google-token.json"
+# Service-account key JSON, downloaded whole from Google Cloud Console (Create
+# Credentials -> Service account -> Keys -> Add key -> JSON). No consent
+# screen, no refresh token, never expires on its own. YOU must also share your
+# calendar with this key's client_email (Calendar settings -> "Share with
+# specific people") -- a service account only sees calendars explicitly shared
+# with it, and (personal Gmail, no Workspace admin console) domain-wide
+# delegation isn't available here, so sharing is the only path. See
+# clawdmeter-daemon/README.md for the full walkthrough.
+GOOGLE_SERVICE_ACCOUNT_PATH = Path.home() / ".clawdmeter-google-service-account.json"
 GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -737,16 +750,99 @@ def _refresh_google_token(tok: dict, client: dict) -> str | None:
     return new_access
 
 
+def _read_google_service_account() -> dict | None:
+    try:
+        data = json.loads(GOOGLE_SERVICE_ACCOUNT_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(data, dict) and data.get("type") == "service_account" and data.get("client_email"):
+        return data
+    return None
+
+
+# Cached google.oauth2.service_account.Credentials (built once) and the last
+# access token + expiry (re-exchanged only once it's stale) -- same shape as
+# the OAuth refresh-token caching above, so a poll doesn't pay a fresh
+# JWT-sign + token-exchange round trip every 300s for no reason.
+_service_account_creds = None
+_service_account_token: dict = {}   # {"access_token":.., "expires_at":..}
+
+
+def _service_account_access_token(sa: dict) -> str | None:
+    # Only google-auth's RSA-signed JWT assertion is used here (the one part
+    # worth a real library instead of hand-rolling) -- the actual token
+    # exchange goes through httpx like every other HTTP call in this file,
+    # deliberately avoiding a dependency on the `requests` package that
+    # google.auth.transport.requests would otherwise pull in.
+    global _service_account_creds, _service_account_token
+    if _service_account_token and time.time() < _service_account_token["expires_at"] - GOOGLE_TOKEN_REFRESH_MARGIN:
+        return _service_account_token["access_token"]
+    try:
+        from google.oauth2 import service_account
+    except ImportError:
+        log("Calendar: google-auth not installed - `pip install google-auth` "
+            "(see clawdmeter-daemon/requirements.txt)")
+        return None
+    try:
+        if _service_account_creds is None:
+            _service_account_creds = service_account.Credentials.from_service_account_info(
+                sa, scopes=[GOOGLE_CALENDAR_SCOPE])
+        assertion = _service_account_creds._make_authorization_grant_assertion()
+        resp = httpx.post(
+            GOOGLE_TOKEN_ENDPOINT,
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": assertion,
+            },
+            timeout=20.0,
+        )
+    except httpx.HTTPError as e:
+        log(f"Calendar: service-account token request failed: {e}")
+        return None
+    except Exception as e:
+        log(f"Calendar: service-account token fetch failed: {e}")
+        return None
+    if resp.status_code >= 400:
+        log(f"Calendar: service-account token exchange HTTP {resp.status_code}: {resp.text[:200]}")
+        return None
+    try:
+        body = resp.json()
+    except (json.JSONDecodeError, ValueError):
+        log("Calendar: service-account token exchange returned invalid JSON")
+        return None
+    access_token = body.get("access_token")
+    if not access_token:
+        log("Calendar: service-account token exchange response missing access_token")
+        return None
+    _service_account_token = {
+        "access_token": access_token,
+        "expires_at": time.time() + body.get("expires_in", 3600),
+    }
+    return access_token
+
+
 def read_google_calendar_token() -> str | None:
-    """Return a Google access token, refreshing via the cached refresh token as
+    """Return a Google access token. Tries the service account first (no
+    consent screen, no refresh-token expiry -- see GOOGLE_SERVICE_ACCOUNT_PATH),
+    then falls back to the interactive-OAuth refresh token, refreshing it as
     needed. Mirrors read_token()'s shape for the Claude token above — the whole
-    point is this never needs interactive re-auth once --calendar-auth has run
-    once, same as claude setup-token being a one-time thing for the Claude side.
+    point is this never needs interactive re-auth once set up once, same as
+    claude setup-token being a one-time thing for the Claude side.
     """
     global _calendar_auth_hint
+    sa = _read_google_service_account()
+    if sa:
+        token = _service_account_access_token(sa)
+        _calendar_auth_hint = "" if token else (
+            "Service-account token fetch failed - check "
+            f"{GOOGLE_SERVICE_ACCOUNT_PATH.name} and that your calendar is "
+            "shared with its client_email")
+        return token
     client = _read_google_client()
     if not client:
-        _calendar_auth_hint = (f"No {GOOGLE_CLIENT_PATH.name} - see --calendar-auth --help")
+        _calendar_auth_hint = (f"No {GOOGLE_SERVICE_ACCOUNT_PATH.name} or {GOOGLE_CLIENT_PATH.name} "
+                                "- see clawdmeter-daemon/README.md (service account, recommended) "
+                                "or --calendar-auth --help (OAuth)")
         return None
     tok = _read_google_token()
     if not tok or not tok.get("refresh_token"):
@@ -1155,6 +1251,17 @@ def do_calendar_poll(override_ids: list[str] | None) -> None:
 
 
 def calendar_poller_loop(interval: float, override_ids: list[str] | None) -> None:
+    if _read_google_service_account() and not override_ids:
+        # A service account has no "My calendars" sidebar, so the selected=true
+        # auto-detect in fetch_active_calendars() finds nothing for it -- this
+        # would otherwise silently poll to {"ok": true, "events": []} forever,
+        # looking like success. Explicit --calendar-id is required for this auth
+        # method (your calendar's address, e.g. your Gmail address), after
+        # sharing that calendar with the service account's client_email.
+        log("Calendar: service account in use with no --calendar-id set - "
+            "auto-detect needs Google's 'selected calendars' list, which "
+            "service accounts don't have. Set --calendar-id to your calendar's "
+            "address; see clawdmeter-daemon/README.md.")
     log(f"Polling Google Calendar every {interval:.0f}s "
         f"({'ids=' + ','.join(override_ids) if override_ids else 'auto-detect active calendars'})")
     while not calendar_state.stop_event.is_set():

@@ -1,4 +1,10 @@
 httpx>=0.27
+# Google Calendar service-account auth (--calendar-id + a
+# ~/.clawdmeter-google-service-account.json key). Optional: the interactive
+# OAuth Desktop-app flow (--calendar-auth) still works without this, but its
+# refresh token expires after 7 days unless the GCP project is published to
+# Production -- service account has no such expiry. See README.md.
+google-auth>=2.30
 # Real-time US AQI from an instant PM2.5 reading (EPA classic breakpoint
 # table), for the weather page's fast-reacting warning -- see poll_weather().
 python-aqi>=0.6.1

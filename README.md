@@ -243,6 +243,58 @@ spelled out rather than terse like the usage contract's `s`/`w` — there's no
 firmware consumer for this yet (see the smalltv-mod project's own notes), so
 expect this shape to firm up once that side is built.
 
+Two ways to authenticate. **Use the service account** unless you have a
+specific reason not to — the interactive-OAuth path below is real but its
+refresh token silently expires after 7 days unless you can publish the GCP
+project to Production, which isn't always possible (this project's own
+history: a different, unrelated OAuth client already in the project had a
+non-HTTPS redirect URI, and Google refuses to publish while *any* client in
+the project has one — the token expiry from this exact trap is what made the
+service-account path get added).
+
+### Option A: service account (recommended)
+
+No consent screen, no browser, no refresh token to expire. The tradeoff: the
+key file itself is a long-lived credential with no expiry, so treat it like a
+password (see step 4).
+
+1. [console.cloud.google.com/projectcreate](https://console.cloud.google.com/projectcreate)
+   — create a project (any name), or reuse one you already have.
+2. [Enable the Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
+   for that project.
+3. [console.cloud.google.com/iam-admin/serviceaccounts](https://console.cloud.google.com/iam-admin/serviceaccounts)
+   — **Create Service Account** (any name, no roles needed). Open it → **Keys**
+   tab → **Add Key** → **Create new key** → JSON. This downloads a `.json` key
+   file — save it as `~/.clawdmeter-google-service-account.json` (the daemon
+   reads exactly that path). `chmod 600` it.
+4. Note the service account's email from the file (`client_email`, looks like
+   `something@your-project.iam.gserviceaccount.com`). In
+   [Google Calendar](https://calendar.google.com) → your calendar's settings
+   → **Share with specific people** → add that email, permission **"See all
+   event details"**. This is the only way a service account can see a
+   personal Gmail calendar — there's no admin console to grant broader access
+   on a non-Workspace account.
+5. `pip install google-auth` (already in `requirements.txt`).
+6. Find your calendar's ID — for your primary calendar it's just your Gmail
+   address. Then enable with an **explicit `--calendar-id`**:
+
+   ```
+   python clawdmeter_daemon.py --calendar --calendar-id you@gmail.com --push-to <device>
+   ```
+
+   `--calendar-id` is **required** with a service account — the default
+   auto-detect relies on Google's "selected calendars" sidebar state, which a
+   service account doesn't have (it isn't a real Google Calendar user, just a
+   grantee on the calendars you explicitly shared). Omitting it doesn't error;
+   it silently polls to zero events forever, which looks like success. The
+   daemon logs a warning on startup if it detects this combination.
+
+If the daemon runs elsewhere (e.g. a headless Pi), copy the key file there
+the same way as the OAuth token below (`scp
+~/.clawdmeter-google-service-account.json <host>:~/`).
+
+### Option B: interactive OAuth ("Desktop app" client)
+
 **One-time setup** (you do this once, on any machine with a browser — not
 over a headless SSH session, since the OAuth redirect must land on the same
 machine that's waiting for it):
@@ -265,13 +317,20 @@ a headless Pi), copy that one file there (`scp ~/.clawdmeter-google-token.json
 > Keep the OAuth consent screen in "Testing" and Google expires your refresh
 > token after 7 days — you'd have to re-run `--calendar-auth` weekly. Publish
 > it to "Production" instead (the setup instructions above cover this) for a
-> refresh token that just keeps working.
+> refresh token that just keeps working — but see the note at the top of this
+> section for a case where that's not achievable, which is exactly why
+> Option A exists.
 
 Then enable it:
 
 ```
 python clawdmeter_daemon.py --calendar --push-to <device>
 ```
+
+If both `~/.clawdmeter-google-service-account.json` and
+`~/.clawdmeter-google-client.json`/`~/.clawdmeter-google-token.json` are
+present, the service account wins — the OAuth files are only read as a
+fallback.
 
 ### Non-English event titles (optional, auto-detected — no flag)
 
@@ -538,7 +597,10 @@ python clawdmeter_daemon.py --antigravity --push-to <device>
                     checked ("selected") in your Google Calendar sidebar --
                     events from all of them are merged, sorted by time, and
                     each tagged with its source calendar's real color so
-                    the device can show which calendar an event came from
+                    the device can show which calendar an event came from.
+                    REQUIRED when using a service account (see Google
+                    Calendar section) -- a service account has no "selected"
+                    sidebar state, so auto-detect silently finds nothing
 --calendar-interval N  seconds between Calendar refreshes (default 300)
 --calendar-push-interval N  seconds between Calendar pushes to the device
                     (default: same as --calendar-interval). Separate from
