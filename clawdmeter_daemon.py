@@ -155,6 +155,16 @@ def _google_service_account_path() -> Path:
 GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+# Service-account credentials additionally need calendarlist write access --
+# not for reading events (calendar.readonly + the ACL share already cover
+# that), but _ensure_calendar_list_entry() calls calendarList.insert() to
+# subscribe the service account to a shared calendar it can't otherwise see
+# in its own (empty) calendarList, purely to get a real per-calendar color
+# back instead of falling back to the device's single default accent for
+# every event. This only touches the service account's OWN calendarList
+# (a self-contained action -- it can only add calendars it's already been
+# granted event access to via sharing), not the calendar owner's data.
+GOOGLE_SERVICE_ACCOUNT_SCOPES = [GOOGLE_CALENDAR_SCOPE, "https://www.googleapis.com/auth/calendar.calendarlist"]
 GOOGLE_TOKEN_REFRESH_MARGIN = 300     # refresh 5 min before expiry, same margin as Claude's
 DEFAULT_CALENDAR_INTERVAL = 300       # s; events don't change fast, spare the API quota
 DEFAULT_WEATHER_INTERVAL = 600        # s; matches Open-Meteo's own forecast update cadence
@@ -798,7 +808,7 @@ def _service_account_access_token(sa: dict) -> str | None:
     try:
         if _service_account_creds is None:
             _service_account_creds = service_account.Credentials.from_service_account_info(
-                sa, scopes=[GOOGLE_CALENDAR_SCOPE])
+                sa, scopes=GOOGLE_SERVICE_ACCOUNT_SCOPES)
         # _make_authorization_grant_assertion() returns bytes -- httpx's form
         # encoder doesn't decode a bytes dict value, it stringifies it (the
         # literal "b'...'" repr, quotes included), so undecoded this becomes
@@ -1027,6 +1037,36 @@ BIRTHDAY_CALENDAR_ID = "addressbook#contacts@group.v.calendar.google.com"
 BIRTHDAY_CALENDAR_COLOR = "ac725e"
 
 
+def _ensure_calendar_list_entry(token: str, calendar_id: str) -> dict | None:
+    """POST calendarList.insert for a calendar_id this token can't already
+    see in its own calendarList. The insert call's response is itself a
+    CalendarListEntry, complete with a real backgroundColor Google assigns on
+    subscribe -- not necessarily the same color the calendar's owner sees in
+    their own sidebar (that's a per-viewer setting with no API to read it for
+    a different account), but stable and distinct per calendar, which is what
+    fetch_active_calendars() needs. None on failure -- callers already treat
+    a missing color as "use the device's default", so this degrades safely.
+    """
+    try:
+        resp = httpx.post(
+            "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"id": calendar_id},
+            timeout=20.0,
+        )
+    except httpx.HTTPError as e:
+        log(f"Calendar list insert failed ({calendar_id}): {e}")
+        return None
+    if resp.status_code >= 400:
+        if resp.status_code != 409:   # 409 = already subscribed, not an error
+            log(f"Calendar list insert HTTP {resp.status_code} ({calendar_id}): {resp.text[:200]}")
+        return None
+    try:
+        return resp.json()
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 def fetch_active_calendars(token: str, override_ids: list[str] | None) -> list[tuple[str, str | None]]:
     """Return [(calendar_id, background_color_hex_no_hash_or_None), ...].
 
@@ -1058,7 +1098,19 @@ def fetch_active_calendars(token: str, override_ids: list[str] | None) -> list[t
     if override_ids:
         out = []
         for cid in override_ids:
-            color = by_id.get(cid, {}).get("backgroundColor")
+            entry = by_id.get(cid)
+            if entry is None:
+                # Not in this token's own calendarList -- normal for a
+                # service account on its first run against a calendar that
+                # was just shared with it: sharing grants event access but
+                # doesn't add an entry to the grantee's own list, and
+                # backgroundColor only exists on list entries, not on the
+                # raw Calendar resource (it's a per-viewer setting, not a
+                # calendar property). Without this, every event from this
+                # calendar_id would silently fall back to the device's one
+                # default accent color instead of a real per-calendar color.
+                entry = _ensure_calendar_list_entry(token, cid)
+            color = (entry or {}).get("backgroundColor")
             out.append((cid, color.lstrip("#") if color else None))
         return out
 
