@@ -799,7 +799,13 @@ def _service_account_access_token(sa: dict) -> str | None:
         if _service_account_creds is None:
             _service_account_creds = service_account.Credentials.from_service_account_info(
                 sa, scopes=[GOOGLE_CALENDAR_SCOPE])
-        assertion = _service_account_creds._make_authorization_grant_assertion()
+        # _make_authorization_grant_assertion() returns bytes -- httpx's form
+        # encoder doesn't decode a bytes dict value, it stringifies it (the
+        # literal "b'...'" repr, quotes included), so undecoded this becomes
+        # a garbage assertion string and Google returns a content-free
+        # "400 invalid_request" that looks identical to a bad key. Confirmed
+        # live: this exact bug, first real-account test, fixed by .decode().
+        assertion = _service_account_creds._make_authorization_grant_assertion().decode("ascii")
         resp = httpx.post(
             GOOGLE_TOKEN_ENDPOINT,
             data={
