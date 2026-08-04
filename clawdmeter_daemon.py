@@ -1018,6 +1018,98 @@ account — takes a few minutes):
     print(f"  scp {GOOGLE_TOKEN_PATH} <host>:~/")
 
 
+# ---- Google Calendar: one-time color sync (OAuth read -> service-account write) --
+# The service-account auth path (see read_google_calendar_token() above) can't
+# see a calendar's color on its own -- backgroundColor/colorId only exist on a
+# CalendarListEntry, which is per-viewer, and a service account starts with an
+# empty calendarList even for calendars explicitly shared with it (sharing
+# grants event access, not a list entry). Confirmed live: reading the color
+# via the service account returns Google's own arbitrary auto-assigned pick,
+# not the color the calendar's real owner actually sees. This bridges that
+# gap with the ONE credential that legitimately has the answer -- the human
+# owner's own OAuth token -- read once, applied once, not an ongoing
+# dependency (the OAuth token from --calendar-auth can expire again on its
+# usual 7-day/Testing-status timer afterward and this still keeps working,
+# since the applied color is stored server-side on the calendarList entry).
+#
+# Also confirmed live: Google's calendarList API only accepts colorId from
+# its fixed 24-color palette -- a calendar using a custom color beyond that
+# palette (real example: owner's actual color was #0088ff, a custom hex;
+# Calendar API could only ever report/accept the nearest palette entry,
+# colorId 16 / #4986e7 "Blueberry") cannot be reproduced exactly through the
+# API at all. This copies colorId (a lossless copy of whatever Google itself
+# already reports for that entry), not backgroundColor -- attempting to PATCH
+# a custom backgroundColor directly was tried and confirmed rejected (Google
+# silently re-derives it from colorId, or returns "400 Invalid color" if
+# colorId is cleared).
+def calendar_sync_color_flow(calendar_id: str) -> None:
+    client = _read_google_client()
+    oauth_tok_data = _read_google_token()
+    if not client or not oauth_tok_data or not oauth_tok_data.get("refresh_token"):
+        print("No working OAuth credentials found - run --calendar-auth once first "
+              "(this is a one-time read of your own account's color, not an ongoing "
+              "dependency; see clawdmeter-daemon/README.md).")
+        return
+    oauth_token = (oauth_tok_data.get("access_token")
+                   if not _google_token_expired(oauth_tok_data)
+                   else _refresh_google_token(oauth_tok_data, client))
+    if not oauth_token:
+        print("OAuth token refresh failed - re-run --calendar-auth.")
+        return
+
+    sa = _read_google_service_account()
+    if not sa:
+        print(f"No service-account key found at {_google_service_account_path()} - "
+              "this command is for syncing color onto a service-account calendarList "
+              "entry, see clawdmeter-daemon/README.md.")
+        return
+    sa_token = _service_account_access_token(sa)
+    if not sa_token:
+        print("Service-account token fetch failed - see the log line above for why.")
+        return
+
+    encoded_id = urllib.parse.quote(calendar_id, safe="")
+    try:
+        owner_resp = httpx.get(
+            f"https://www.googleapis.com/calendar/v3/users/me/calendarList/{encoded_id}",
+            headers={"Authorization": f"Bearer {oauth_token}"}, timeout=20.0)
+    except httpx.HTTPError as e:
+        print(f"Reading your own calendarList entry failed: {e}")
+        return
+    if owner_resp.status_code >= 400:
+        print(f"Reading your own calendarList entry HTTP {owner_resp.status_code}: "
+              f"{owner_resp.text[:300]}")
+        return
+    owner_entry = owner_resp.json()
+    color_id = owner_entry.get("colorId")
+    if not color_id:
+        print(f"Your own calendarList entry for {calendar_id!r} has no colorId set "
+              "(unexpected) - nothing to sync.")
+        return
+    print(f"Your account sees colorId {color_id!r} "
+          f"(backgroundColor {owner_entry.get('backgroundColor')!r}) for {calendar_id!r}.")
+
+    if not _ensure_calendar_list_entry(sa_token, calendar_id):
+        # Not necessarily fatal -- it may already be subscribed (see
+        # _ensure_calendar_list_entry's 409-is-fine handling); patch below
+        # will fail loudly if the service account genuinely can't see it.
+        pass
+    try:
+        patch_resp = httpx.patch(
+            f"https://www.googleapis.com/calendar/v3/users/me/calendarList/{encoded_id}",
+            headers={"Authorization": f"Bearer {sa_token}"},
+            json={"colorId": color_id}, timeout=20.0)
+    except httpx.HTTPError as e:
+        print(f"Applying colorId to the service account's entry failed: {e}")
+        return
+    if patch_resp.status_code >= 400:
+        print(f"Applying colorId HTTP {patch_resp.status_code}: {patch_resp.text[:300]}")
+        return
+    sa_entry = patch_resp.json()
+    print(f"Service account now shows colorId {sa_entry.get('colorId')!r} "
+          f"(backgroundColor {sa_entry.get('backgroundColor')!r}) for {calendar_id!r}. Done.")
+
+
 # ---- Google Calendar: polling -----------------------------------------------
 
 CALENDAR_MAX_EVENTS = 6   # matches the device's CAL_MAX_EVENTS (two 3-event pages, cycled)
@@ -3306,6 +3398,12 @@ def main() -> None:
                     help="one-time interactive Google Calendar authorization, then exit "
                          "(run this on a machine with a browser; see printed instructions "
                          "if no OAuth client is set up yet)")
+    ap.add_argument("--calendar-sync-color", metavar="CALENDAR_ID", default=None,
+                    help="one-time: read this calendar's real colorId using your own "
+                         "OAuth login (needs --calendar-auth run at least once) and apply "
+                         "it to the service account's calendarList entry, then exit. "
+                         "Service accounts can't see per-calendar color on their own -- "
+                         "this bridges that gap once; not needed again afterward")
     ap.add_argument("--calendar", action="store_true",
                     help="enable the Google Calendar feature (needs --calendar-auth run once first)")
     ap.add_argument("--no-calendar", action="store_true",
@@ -3391,6 +3489,9 @@ def main() -> None:
         return
     if args.calendar_auth:
         calendar_auth_flow()
+        return
+    if args.calendar_sync_color:
+        calendar_sync_color_flow(args.calendar_sync_color)
         return
 
     state.hid_enabled = not args.no_hid
