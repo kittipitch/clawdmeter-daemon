@@ -119,7 +119,7 @@ API_BODY = {
 #
 # Two auth methods, both flat in $HOME to match this daemon's existing convention
 # (~/.clawdmeter-daemon.json, ~/.clawdmeter-daemon.log). Service account is
-# preferred (see GOOGLE_SERVICE_ACCOUNT_PATH below and clawdmeter-daemon/README.md)
+# preferred (see _google_service_account_path() below and clawdmeter-daemon/README.md)
 # — the OAuth Desktop-app flow works but its refresh token expires after 7 days
 # unless the GCP project is published to Production, which isn't always possible
 # (e.g. another OAuth client in the same project has a non-HTTPS redirect URI).
@@ -139,7 +139,19 @@ GOOGLE_TOKEN_PATH = Path.home() / ".clawdmeter-google-token.json"
 # with it, and (personal Gmail, no Workspace admin console) domain-wide
 # delegation isn't available here, so sharing is the only path. See
 # clawdmeter-daemon/README.md for the full walkthrough.
-GOOGLE_SERVICE_ACCOUNT_PATH = Path.home() / ".clawdmeter-google-service-account.json"
+#
+# Path is configurable via GOOGLE_APPLICATION_CREDENTIALS (Google's own
+# standard env var for exactly this, recognized by their other client
+# libraries too -- not invented for this project), settable in .env like
+# every other secret here (see "---- .env ----" near the top of this file).
+# Falls back to the fixed path below if unset, so a plain drop-the-file setup
+# still works with zero configuration.
+GOOGLE_SERVICE_ACCOUNT_PATH_DEFAULT = Path.home() / ".clawdmeter-google-service-account.json"
+
+
+def _google_service_account_path() -> Path:
+    env = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    return Path(env).expanduser() if env else GOOGLE_SERVICE_ACCOUNT_PATH_DEFAULT
 GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -752,7 +764,7 @@ def _refresh_google_token(tok: dict, client: dict) -> str | None:
 
 def _read_google_service_account() -> dict | None:
     try:
-        data = json.loads(GOOGLE_SERVICE_ACCOUNT_PATH.read_text())
+        data = json.loads(_google_service_account_path().read_text())
     except (OSError, json.JSONDecodeError):
         return None
     if isinstance(data, dict) and data.get("type") == "service_account" and data.get("client_email"):
@@ -823,7 +835,7 @@ def _service_account_access_token(sa: dict) -> str | None:
 
 def read_google_calendar_token() -> str | None:
     """Return a Google access token. Tries the service account first (no
-    consent screen, no refresh-token expiry -- see GOOGLE_SERVICE_ACCOUNT_PATH),
+    consent screen, no refresh-token expiry -- see _google_service_account_path()),
     then falls back to the interactive-OAuth refresh token, refreshing it as
     needed. Mirrors read_token()'s shape for the Claude token above — the whole
     point is this never needs interactive re-auth once set up once, same as
@@ -835,12 +847,12 @@ def read_google_calendar_token() -> str | None:
         token = _service_account_access_token(sa)
         _calendar_auth_hint = "" if token else (
             "Service-account token fetch failed - check "
-            f"{GOOGLE_SERVICE_ACCOUNT_PATH.name} and that your calendar is "
+            f"{_google_service_account_path()} and that your calendar is "
             "shared with its client_email")
         return token
     client = _read_google_client()
     if not client:
-        _calendar_auth_hint = (f"No {GOOGLE_SERVICE_ACCOUNT_PATH.name} or {GOOGLE_CLIENT_PATH.name} "
+        _calendar_auth_hint = (f"No {_google_service_account_path().name} or {GOOGLE_CLIENT_PATH.name} "
                                 "- see clawdmeter-daemon/README.md (service account, recommended) "
                                 "or --calendar-auth --help (OAuth)")
         return None

@@ -265,8 +265,18 @@ password (see step 4).
 3. [console.cloud.google.com/iam-admin/serviceaccounts](https://console.cloud.google.com/iam-admin/serviceaccounts)
    — **Create Service Account** (any name, no roles needed). Open it → **Keys**
    tab → **Add Key** → **Create new key** → JSON. This downloads a `.json` key
-   file — save it as `~/.clawdmeter-google-service-account.json` (the daemon
-   reads exactly that path). `chmod 600` it.
+   file. `chmod 600` it, then either:
+   - save it as `~/.clawdmeter-google-service-account.json` (the daemon's
+     default path, zero config needed), **or**
+   - keep it wherever you like and point at it via `.env` (same file the
+     daemon already loads `CLAWDMETER_ZAI_KEY`/etc. from — one in this
+     script's own directory, one in your cwd):
+     ```
+     GOOGLE_APPLICATION_CREDENTIALS=/path/to/your-key.json
+     ```
+     This is Google's own standard env var name for a service-account key
+     path, recognized by their other client libraries too — not invented for
+     this project.
 4. Note the service account's email from the file (`client_email`, looks like
    `something@your-project.iam.gserviceaccount.com`). In
    [Google Calendar](https://calendar.google.com) → your calendar's settings
