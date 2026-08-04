@@ -303,6 +303,34 @@ If the daemon runs elsewhere (e.g. a headless Pi), copy the key file there
 the same way as the OAuth token below (`scp
 ~/.clawdmeter-google-service-account.json <host>:~/`).
 
+**Event colors will look wrong (or all the same) until you run one more
+command.** A service account can't see a calendar's real color on its own —
+`backgroundColor` only exists on a per-viewer `CalendarListEntry`, and
+sharing a calendar doesn't add one to the grantee's own list. Without this
+step every event falls back to a Google-assigned arbitrary color, not the
+one you actually see in your own Google Calendar:
+
+```
+python clawdmeter_daemon.py --calendar-auth          # one-time, if you haven't already
+python clawdmeter_daemon.py --calendar-sync-color you@gmail.com
+```
+
+The first command is needed only because reading *your own* view of the
+color requires *your own* OAuth login — there's no way around that, even a
+domain-wide-delegated service account can't do it on a personal Gmail
+account (no Workspace admin console to grant that). It's a one-time read,
+not an ongoing dependency: the color gets applied to the service account's
+own `calendarList` entry and stays there. Re-run `--calendar-sync-color` any
+time you change the calendar's color in Google's UI.
+
+**One real limitation, not fixable**: Google Calendar's API only accepts
+colors from its fixed 24-color palette for a `calendarList` entry. If
+you've picked a **custom color** beyond that palette (Google Calendar's UI
+allows this), the closest the API can do is the nearest palette color, not
+your exact hex — confirmed by testing directly against Google's API, not an
+assumption. `--calendar-sync-color` gets you the closest possible match
+either way.
+
 ### Option B: interactive OAuth ("Desktop app" client)
 
 **One-time setup** (you do this once, on any machine with a browser — not
@@ -600,6 +628,9 @@ python clawdmeter_daemon.py --antigravity --push-to <device>
 --uninstall         remove the autostart entry and exit
 --autostart-status  print whether autostart is registered and exit
 --calendar-auth     one-time interactive Google Calendar authorization, then exit
+--calendar-sync-color CALENDAR_ID  one-time: read this calendar's real color
+                    via your own OAuth login and apply it to the service
+                    account, then exit -- see Google Calendar section
 --calendar          enable the Google Calendar feature (needs --calendar-auth run once first)
 --no-calendar       disable the Google Calendar feature (overrides a remembered --calendar)
 --calendar-id ID[,ID...]  comma-separated calendar IDs to poll, overriding
