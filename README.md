@@ -19,7 +19,11 @@ Pick one or several — they share the same poller, token handling and tray icon
 
 This merges the two device-specific daemons into one:
 - **Clawdmeter (ESP32‑S3, serial):** https://github.com/giovi321/clawdmeter-win
-- **SmallTV (ESP8266, HTTP):** https://github.com/giovi321/smalltv-mod
+- **SmallTV (ESP8266, HTTP):** https://github.com/kittipitch/smalltv-mod — the
+  fork this daemon is built for. Plain upstream `giovi321/smalltv-mod` only has
+  `/api/usage`; the Calendar/Weather/z.ai/Codex/Antigravity features this
+  README documents need the fork's `/api/calendar`, `/api/weather`, `/api/zai`,
+  `/api/codex`, and `/api/antigravity` endpoints, which upstream doesn't have.
 
 > Not affiliated with Anthropic. The throwaway API call it makes (cheapest model,
 > `max_tokens: 1`) is only to read the rate-limit response headers.
@@ -66,7 +70,8 @@ python clawdmeter_daemon.py --serial --serve         # several at once
 python clawdmeter_daemon.py --no-tray --serve        # headless console
 ```
 
-With no transport flag it defaults to `--serve` on `:8787`.
+With no transport flag it defaults to `--push` if `CLAWDMETER_PUSH_URL`
+(or a remembered push target) is set, otherwise `--serve` on `:8787`.
 
 ## Authentication (the durable way)
 
