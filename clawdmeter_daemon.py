@@ -1312,6 +1312,28 @@ def fetch_event_color_map(token: str) -> dict[str, str]:
 
 _translate_cache: dict[str, str] = {}
 _translate_warned_missing = False
+_translate_fail_until: dict[str, float] = {}   # text -> monotonic time to retry after
+TRANSLATE_CACHE_PATH = Path.home() / ".clawdmeter-translate-cache.json"
+TRANSLATE_FAIL_BACKOFF_SEC = 300.0   # don't re-pay a 15s timeout every poll for the same title
+
+
+def _load_translate_cache() -> dict[str, str]:
+    try:
+        return json.loads(TRANSLATE_CACHE_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_translate_cache(cache: dict[str, str]) -> None:
+    try:
+        tmp = TRANSLATE_CACHE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+        tmp.replace(TRANSLATE_CACHE_PATH)
+    except OSError as e:
+        log(f"Calendar: could not persist translate cache: {e}")
+
+
+_translate_cache: dict[str, str] = _load_translate_cache()
 
 
 def _translate_to_english(text: str) -> str:
@@ -1332,6 +1354,10 @@ def _translate_to_english(text: str) -> str:
     global _translate_warned_missing
     if text in _translate_cache:
         return _translate_cache[text]
+    now = time.monotonic()
+    retry_after = _translate_fail_until.get(text)
+    if retry_after is not None and now < retry_after:
+        return text   # recent failure for this exact title -- don't re-pay the timeout yet
     trans_bin = shutil.which("trans")
     if not trans_bin:
         if not _translate_warned_missing:
@@ -1350,8 +1376,10 @@ def _translate_to_english(text: str) -> str:
         log(f"Calendar: translate-shell failed for {text!r}: {e}")
         translated = ""
     if not translated:
+        _translate_fail_until[text] = now + TRANSLATE_FAIL_BACKOFF_SEC
         return text
     _translate_cache[text] = translated
+    _save_translate_cache(_translate_cache)
     return translated
 
 
