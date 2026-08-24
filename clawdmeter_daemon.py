@@ -1418,6 +1418,12 @@ def poll_calendar(token: str, override_ids: list[str] | None) -> tuple[dict | No
     Payload keys are spelled out (not terse like the usage contract's s/w/sr/wr)
     to match what features/calendar/ actually consumes on the firmware side.
 
+    Each event also carries "calendarId" (the source calendar's own id) --
+    added so the device can apply a per-calendar color override the user
+    picked in its own web UI, independent of whatever real Google color (or
+    lack of one) this daemon resolved above. Without it, a device-side
+    override has no way to know which calendar an event came from.
+
     An "end" is carried too (when Google provides one) -- without it the
     device cannot tell a multi-day event from a single-day one. Google's
     all-day end.date is exclusive, so it's shipped raw and the device does
@@ -1486,6 +1492,7 @@ def poll_calendar(token: str, override_ids: list[str] | None) -> tuple[dict | No
                 "summary": summary,
                 "start": start_val,
                 "allDay": all_day,
+                "calendarId": calendar_id,
             }
             event_color = event_color_map.get(str(ev.get("colorId") or "")) or color
             if event_color:
@@ -1570,6 +1577,8 @@ def do_calendar_poll(static_ids: list[str] | None, config_url: str | None) -> No
 
 def calendar_poller_loop(interval: float, static_ids: list[str] | None,
                           config_url: str | None) -> None:
+    if config_url:
+        seed_device_calendar_ids(config_url, static_ids)
     if _read_google_service_account() and not static_ids and not config_url:
         # A service account has no "My calendars" sidebar, so the selected=true
         # auto-detect in fetch_active_calendars() finds nothing for it -- this
@@ -1675,6 +1684,37 @@ def read_device_calendar_ids(config_url: str) -> list[str] | None:
         return None
     ids = [c.strip() for c in raw.split(",") if c.strip()]
     return ids or None
+
+
+def seed_device_calendar_ids(config_url: str, static_ids: list[str] | None) -> None:
+    """One-time, at poller startup only (never per-poll -- see the call site):
+    if the device's own Calendar ID(s) field is empty and this daemon has a
+    real static --calendar-id list, push that list onto the device once, so
+    the web UI shows what's actually active instead of a blank field that
+    read as broken ("it there but it's not showing the current ones").
+    Deliberately one-way and one-shot: once seeded (or if the field already
+    had something in it), this never runs again for the life of this
+    process, so it can't fight a user who later edits or clears the field --
+    read_device_calendar_ids() reading the device fresh every poll is what
+    makes edits "take" without a restart; this function only ever primes an
+    empty box, never overwrites a non-empty one."""
+    if not static_ids:
+        return
+    try:
+        current = read_device_calendar_ids(config_url)
+    except Exception:
+        current = None
+    if current:
+        return   # device already has something -- device wins, don't touch it
+    try:
+        body = json.dumps({"calendar": {"ids": ",".join(static_ids)}})
+        resp = httpx.post(config_url, content=body,
+                           headers={"Content-Type": "application/json"}, timeout=10.0)
+        resp.raise_for_status()
+        log(f"Calendar: seeded device's empty Calendar ID(s) field with "
+            f"{len(static_ids)} static id(s) from --calendar-id ({config_url})")
+    except httpx.HTTPError as e:
+        log(f"Calendar: couldn't seed device ids at {config_url}: {e}")
 
 
 _city_cache: dict[tuple[float, float], str | None] = {}
