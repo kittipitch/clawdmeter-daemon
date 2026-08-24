@@ -1517,7 +1517,15 @@ def poll_calendar(token: str, override_ids: list[str] | None) -> tuple[dict | No
     return {"ok": True, "events": deduped[:CALENDAR_MAX_EVENTS]}, False
 
 
-def do_calendar_poll(override_ids: list[str] | None) -> None:
+def do_calendar_poll(static_ids: list[str] | None, config_url: str | None) -> None:
+    # Device-supplied ids win over the static --calendar-id list when present
+    # -- editing the device's Agenda tab is how a newly-shared calendar gets
+    # picked up without a daemon restart. Falls back to static_ids (or
+    # auto-detect) if the device field is empty/unreachable, so existing
+    # CLI-only setups keep working unchanged.
+    override_ids = read_device_calendar_ids(config_url) if config_url else None
+    if not override_ids:
+        override_ids = static_ids
     token = read_google_calendar_token()
     if not token:
         calendar_state.set_payload({"ok": False})
@@ -1560,23 +1568,29 @@ def do_calendar_poll(override_ids: list[str] | None) -> None:
         calendar_state.push_kick_event.set()
 
 
-def calendar_poller_loop(interval: float, override_ids: list[str] | None) -> None:
-    if _read_google_service_account() and not override_ids:
+def calendar_poller_loop(interval: float, static_ids: list[str] | None,
+                          config_url: str | None) -> None:
+    if _read_google_service_account() and not static_ids and not config_url:
         # A service account has no "My calendars" sidebar, so the selected=true
         # auto-detect in fetch_active_calendars() finds nothing for it -- this
         # would otherwise silently poll to {"ok": true, "events": []} forever,
-        # looking like success. Explicit --calendar-id is required for this auth
-        # method (your calendar's address, e.g. your Gmail address), after
-        # sharing that calendar with the service account's client_email.
-        log("Calendar: service account in use with no --calendar-id set - "
-            "auto-detect needs Google's 'selected calendars' list, which "
-            "service accounts don't have. Set --calendar-id to your calendar's "
-            "address; see clawdmeter-daemon/README.md.")
+        # looking like success. Explicit ids are required for this auth method
+        # (a calendar's address, e.g. a Gmail address), after sharing that
+        # calendar with the service account's client_email -- either via
+        # --calendar-id, or via the device's own Agenda tab (config_url reads
+        # that live each poll, see read_device_calendar_ids()).
+        log("Calendar: service account in use with no --calendar-id and no "
+            "push target to read device-configured ids from - auto-detect "
+            "needs Google's 'selected calendars' list, which service "
+            "accounts don't have. Set --calendar-id, or set the Calendar "
+            "ID(s) field in the device's Agenda & weather tab; see "
+            "clawdmeter-daemon/README.md.")
     log(f"Polling Google Calendar every {interval:.0f}s "
-        f"({'ids=' + ','.join(override_ids) if override_ids else 'auto-detect active calendars'})")
+        f"(static ids={','.join(static_ids) if static_ids else 'none'}, "
+        f"{'device ids from ' + config_url if config_url else 'no device config source'})")
     while not calendar_state.stop_event.is_set():
         try:
-            do_calendar_poll(override_ids)
+            do_calendar_poll(static_ids, config_url)
         except Exception as e:
             # Backstop against an unexpected exception killing this daemon
             # thread permanently -- see poller_loop()'s comment for why.
@@ -1637,6 +1651,30 @@ def read_device_location(config_url: str) -> tuple[float, float] | None:
     if lat == 0.0 and lon == 0.0:
         return None
     return lat, lon
+
+
+def read_device_calendar_ids(config_url: str) -> list[str] | None:
+    """Read the calendar ID(s) the user set in the device's own Agenda tab, so
+    a newly-shared calendar gets picked up on the next poll with no daemon
+    restart. Same reasoning as read_device_location() above (one place to
+    configure, not duplicated into daemon flags), but calendar IDs specifically
+    exist here because Google's Calendar API gives a service account no way to
+    discover which calendars have been shared with it -- CalendarList only
+    reflects entries a user has explicitly added, never automatically reflects
+    ACL grants (confirmed against Google's own API docs, and there's a filed
+    Google issue about exactly this gap: issuetracker.google.com/issues/148804709).
+    The human has to supply the ID somewhere; this lets that "somewhere" be
+    edited on the device without touching the daemon at all."""
+    try:
+        resp = httpx.get(config_url, timeout=10.0)
+        resp.raise_for_status()
+        cal = resp.json().get("calendar", {})
+        raw = str(cal.get("ids", "") or "")
+    except (httpx.HTTPError, ValueError, TypeError) as e:
+        log(f"Calendar: couldn't read ids from {config_url}: {e}")
+        return None
+    ids = [c.strip() for c in raw.split(",") if c.strip()]
+    return ids or None
 
 
 _city_cache: dict[tuple[float, float], str | None] = {}
@@ -3833,9 +3871,13 @@ def main() -> None:
         raw_ids = (cfg.get("calendar_id") or "").strip()
         calendar_ids = [c.strip() for c in raw_ids.split(",") if c.strip()] or None
         cal_interval = float(cfg.get("calendar_interval", DEFAULT_CALENDAR_INTERVAL))
-        threading.Thread(target=calendar_poller_loop,
-                         args=(cal_interval, calendar_ids), daemon=True).start()
         cal_targets = tuple(_static_push_urls(cfg))
+        # Read the live calendar-id override from the same device this
+        # daemon is already pushing to -- first target, same convention
+        # weather's config_url uses. Only meaningful with a push target.
+        cal_config_url = _device_config_url(cal_targets[0]) if cal_targets else None
+        threading.Thread(target=calendar_poller_loop,
+                         args=(cal_interval, calendar_ids, cal_config_url), daemon=True).start()
         if cal_targets:
             cal_stop = threading.Event()
             cal_push_interval = float(cfg.get("calendar_push_interval", cal_interval))

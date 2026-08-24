@@ -308,6 +308,23 @@ password (see step 4).
    it silently polls to zero events forever, which looks like success. The
    daemon logs a warning on startup if it detects this combination.
 
+   **Alternative to the CLI flag: set it on the device instead.** Google's
+   Calendar API gives a service account no way to discover a calendar that's
+   been shared with it — there is no "list calendars shared with me" endpoint
+   anywhere in the API (confirmed against Google's own docs; there's also a
+   filed Google issue specifically about this:
+   [issuetracker.google.com/issues/148804709](https://issuetracker.google.com/issues/148804709)).
+   So every time you share a new calendar with the service account, *something*
+   has to be told its ID by hand. Instead of editing `--calendar-id` and
+   restarting the daemon, the device's own web UI (Agenda & weather tab →
+   "Calendar ID(s)") accepts the same comma-separated format — the daemon
+   re-reads that field from the device's own `/api/config` on every poll
+   cycle (same pattern as `--weather` already uses for lat/lon), so sharing a
+   calendar and pasting its ID into the device is enough; no restart needed.
+   If both are set, the device's field wins; `--calendar-id` is only used
+   when the device's field is empty (or there's no `--push-to` target to read
+   it from).
+
 If the daemon runs elsewhere (e.g. a headless Pi), copy the key file there
 the same way as the OAuth token below (`scp
 ~/.clawdmeter-google-service-account.json <host>:~/`).
