@@ -177,6 +177,7 @@ DEFAULT_ZAI_INTERVAL = 300            # s; same cadence as calendar -- this endp
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_AQ_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 ZAI_QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit"
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 
 DEFAULT_CODEX_INTERVAL = 300           # s; each poll spins up `codex app-server` briefly
                                         # (real subprocess, ~1-2s) to read cached rate-limit
@@ -187,6 +188,8 @@ DEFAULT_ANTIGRAVITY_INTERVAL = 1800    # s; UNLIKE Codex, each poll fires a real
                                         # prompt (genuine cost, see poll_antigravity()) --
                                         # 30 min default specifically because of that cost,
                                         # not just convention.
+DEFAULT_OPENROUTER_INTERVAL = 300       # s; OpenRouter is one cheap authenticated GET,
+                                        # no model/token cost, so a short interval is fine.
 
 
 # A daemon launched windowless (pythonw) or headless has no visible console, so
@@ -398,6 +401,11 @@ _auth_hint = ""
 # credential, not a UI preference).
 _zai_api_key = ""
 
+# OpenRouter's own API key (for the key/usage endpoint). Set once from
+# --openrouter-key / CLAWDMETER_OPENROUTER_KEY / ~/.openrouter_dot_ai_key in
+# main(); intentionally NOT persisted to ~/.clawdmeter-daemon.json.
+_openrouter_api_key = ""
+
 
 # The devices no longer support a write-auth key (removed -- plaintext HTTP
 # gave it no real security value, only accidental-write protection, which a
@@ -416,6 +424,9 @@ weather_state = State()
 
 # z.ai quota feature: same generic State reuse.
 zai_state = State()
+
+# OpenRouter spend feature: same generic State reuse.
+openrouter_state = State()
 
 # Codex CLI quota feature: same generic State reuse. No credential of its
 # own here -- relies on `codex login` already being done on this machine.
@@ -1992,6 +2003,77 @@ def zai_push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
         zai_state.push_kick_event.clear()
 
 
+def poll_openrouter(api_key: str) -> dict:
+    """Fetch OpenRouter key usage/spend. Plain authenticated GET, no OAuth
+    dance and no model call; parsed defensively because only the few
+    device-facing spend fields are needed here."""
+    payload: dict = {"ok": True}
+    try:
+        r = httpx.get(OPENROUTER_KEY_URL, headers={
+            "Authorization": f"Bearer {api_key}",
+        }, timeout=15.0)
+        r.raise_for_status()
+        data = r.json().get("data", {})
+        if not isinstance(data, dict):
+            return {"ok": False}
+
+        usd_daily = data.get("usage_daily")
+        if isinstance(usd_daily, (int, float)):
+            payload["usd_daily"] = usd_daily
+        usd_weekly = data.get("usage_weekly")
+        if isinstance(usd_weekly, (int, float)):
+            payload["usd_weekly"] = usd_weekly
+        usd_total = data.get("usage")
+        if isinstance(usd_total, (int, float)):
+            payload["usd_total"] = usd_total
+        free_tier = data.get("is_free_tier")
+        if isinstance(free_tier, bool):
+            payload["free_tier"] = free_tier
+    except (httpx.HTTPError, ValueError) as e:
+        log(f"OpenRouter: key fetch failed: {e}")
+
+    payload["ok"] = len(payload) > 1
+    return payload
+
+
+def do_openrouter_poll(api_key: str) -> None:
+    payload = poll_openrouter(api_key)
+    openrouter_state.set_payload(payload)
+    if len(payload) > 1:
+        log(f"OpenRouter: {payload}")
+
+
+def openrouter_poller_loop(interval: float, api_key: str) -> None:
+    log(f"Polling OpenRouter spend every {interval:.0f}s")
+    while not openrouter_state.stop_event.is_set():
+        try:
+            do_openrouter_poll(api_key)
+        except Exception as e:
+            log(f"OpenRouter poll: unexpected error, will retry next interval: {e}")
+        openrouter_state.refresh_event.wait(interval)
+        openrouter_state.refresh_event.clear()
+
+
+def openrouter_push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
+    """Same shape as antigravity_push_loop() but for the OpenRouter payload,
+    pushed to /api/openrouter on each device."""
+    log(f"HTTP OpenRouter push every {interval:.0f}s")
+    while not stop.is_set():
+        payload = openrouter_state.get_payload()
+        urls = targets_fn()
+        if payload.get("ok") and len(payload) > 1 and urls:
+            for url in urls:
+                or_url = _resolve_url_for_push(url.replace("/api/usage", "/api/openrouter"))
+                try:
+                    r = httpx.post(or_url, json=payload, timeout=10.0, headers=_push_headers())
+                    if r.status_code >= 400:
+                        log(f"OpenRouter push {or_url} HTTP {r.status_code}")
+                except httpx.HTTPError as e:
+                    log(f"OpenRouter push {or_url} failed: {e}")
+        openrouter_state.push_kick_event.wait(interval)
+        openrouter_state.push_kick_event.clear()
+
+
 def _codex_rpc_call() -> dict | None:
     """Query Codex CLI's real ChatGPT-plan rate-limit quota via `codex
     app-server`'s JSON-RPC `account/rateLimits/read` method over stdio
@@ -2897,6 +2979,7 @@ def push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
                         calendar_state.push_kick_event.set()
                         weather_state.push_kick_event.set()
                         zai_state.push_kick_event.set()
+                        openrouter_state.push_kick_event.set()
                         codex_state.push_kick_event.set()
                         # Antigravity's push (re-sending its cached payload
                         # sooner) is free, so it gets kicked like the others.
@@ -2912,6 +2995,7 @@ def push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
                         calendar_state.refresh_event.set()
                         weather_state.refresh_event.set()
                         zai_state.refresh_event.set()
+                        openrouter_state.refresh_event.set()
                         codex_state.refresh_event.set()
                 except httpx.HTTPError as e:
                     log(f"Push {url} failed: {e}")
@@ -3496,6 +3580,24 @@ def autostart_status() -> str | None:
         sys.platform, _linux_autostart_status)()
 
 
+def _resolve_openrouter_api_key(cli_key: str | None) -> str:
+    key = (cli_key or "").strip()
+    if key:
+        return key
+    key = os.environ.get("CLAWDMETER_OPENROUTER_KEY", "").strip()
+    if key:
+        return key
+    openrouter_key_path = os.path.expanduser("~/.openrouter_dot_ai_key")
+    if os.path.isfile(openrouter_key_path):
+        try:
+            key = Path(openrouter_key_path).read_text().strip()
+        except OSError:
+            return ""
+        if key:
+            return key
+    return ""
+
+
 # ---- Entry point ----------------------------------------------------------
 
 def main() -> None:
@@ -3577,6 +3679,17 @@ def main() -> None:
                          "Required for --zai to do anything.")
     ap.add_argument("--zai-interval", type=float, default=None,
                     help=f"seconds between z.ai quota refreshes (default {DEFAULT_ZAI_INTERVAL:.0f})")
+    # OpenRouter spend (optional feature, off by default). Lightweight
+    # authenticated read, no per-call model/token cost.
+    ap.add_argument("--openrouter", action="store_true",
+                    help="enable OpenRouter dollar-spend push (lightweight key read, no per-call cost)")
+    ap.add_argument("--no-openrouter", action="store_true",
+                    help="disable the OpenRouter feature (overrides a previously remembered --openrouter)")
+    ap.add_argument("--openrouter-key", default=None,
+                    help="OpenRouter API key (also settable via CLAWDMETER_OPENROUTER_KEY / .env; "
+                         "falls back to ~/.openrouter_dot_ai_key). Required for --openrouter to do anything.")
+    ap.add_argument("--openrouter-interval", type=float, default=None,
+                    help=f"seconds between OpenRouter spend refreshes (default {DEFAULT_OPENROUTER_INTERVAL:.0f})")
     # Codex CLI quota (optional feature, off by default). Real ChatGPT-plan
     # usage, no API key/billing involved -- needs `codex login` already done
     # on this machine. Each poll briefly spins up `codex app-server` and
@@ -3605,8 +3718,9 @@ def main() -> None:
                     help=f"seconds between Antigravity quota refreshes (default {DEFAULT_ANTIGRAVITY_INTERVAL:.0f})")
     args = ap.parse_args()
 
-    global _zai_api_key
+    global _zai_api_key, _openrouter_api_key
     _zai_api_key = args.zai_key or os.environ.get("CLAWDMETER_ZAI_KEY", "")
+    _openrouter_api_key = _resolve_openrouter_api_key(args.openrouter_key)
 
     # Autostart management runs and exits; it never starts the daemon.
     if args.install:
@@ -3678,6 +3792,14 @@ def main() -> None:
     if args.zai_interval is not None:
         cfg["zai_interval"] = args.zai_interval
     # _zai_api_key is NOT stored in cfg -- it's a credential, not a UI
+    # preference.
+    if args.openrouter:
+        cfg["openrouter_enabled"] = True
+    if args.no_openrouter:
+        cfg["openrouter_enabled"] = False
+    if args.openrouter_interval is not None:
+        cfg["openrouter_interval"] = args.openrouter_interval
+    # _openrouter_api_key is NOT stored in cfg -- it's a credential, not a UI
     # preference.
     if args.codex:
         cfg["codex_enabled"] = True
@@ -3756,6 +3878,24 @@ def main() -> None:
                                  daemon=True).start()
             else:
                 log("Z.AI enabled but no --push-to host configured - nothing to push to")
+
+    # OpenRouter: independent of the primary Transport too, same reasoning as z.ai.
+    if cfg.get("openrouter_enabled"):
+        if not _openrouter_api_key:
+            log("OpenRouter enabled but no --openrouter-key/CLAWDMETER_OPENROUTER_KEY/~/.openrouter_dot_ai_key configured - nothing to poll")
+        else:
+            openrouter_targets = tuple(_static_push_urls(cfg))
+            if openrouter_targets:
+                openrouter_interval = float(cfg.get("openrouter_interval", DEFAULT_OPENROUTER_INTERVAL))
+                threading.Thread(target=openrouter_poller_loop,
+                                 args=(openrouter_interval, _openrouter_api_key), daemon=True).start()
+                openrouter_stop = threading.Event()
+                threading.Thread(target=openrouter_push_loop,
+                                 args=(openrouter_stop, lambda: openrouter_targets,
+                                       float(cfg.get("push_interval", DEFAULT_PUSH_INTERVAL))),
+                                 daemon=True).start()
+            else:
+                log("OpenRouter enabled but no --push-to host configured - nothing to push to")
 
     # Codex: independent of the primary Transport too, same reasoning as z.ai.
     if cfg.get("codex_enabled"):

@@ -21,9 +21,10 @@ This merges the two device-specific daemons into one:
 - **Clawdmeter (ESP32‑S3, serial):** https://github.com/giovi321/clawdmeter-win
 - **SmallTV (ESP8266, HTTP):** https://github.com/kittipitch/smalltv-mod — the
   fork this daemon is built for. Plain upstream `giovi321/smalltv-mod` only has
-  `/api/usage`; the Calendar/Weather/z.ai/Codex/Antigravity features this
+  `/api/usage`; the Calendar/Weather/z.ai/OpenRouter/Codex/Antigravity features this
   README documents need the fork's `/api/calendar`, `/api/weather`, `/api/zai`,
-  `/api/codex`, and `/api/antigravity` endpoints, which upstream doesn't have.
+  `/api/openrouter`, `/api/codex`, and `/api/antigravity` endpoints, which
+  upstream doesn't have.
 
 > Not affiliated with Anthropic. The throwaway API call it makes (cheapest model,
 > `max_tokens: 1`) is only to read the rate-limit response headers.
@@ -465,6 +466,22 @@ confirmed working against a real account, no stability guarantee.
 python clawdmeter_daemon.py --zai --zai-key <your-key> --push-to <device>
 ```
 
+## OpenRouter spend (optional, off by default)
+
+Pushes your OpenRouter account dollar spend to
+`http://<device>/api/openrouter`, for a `smalltv-mod` build with the
+OpenRouter spend page. This is a lightweight authenticated key read, no
+model call and no per-call cost. The key is read from `--openrouter-key`,
+`CLAWDMETER_OPENROUTER_KEY`, or `~/.openrouter_dot_ai_key` in that order.
+
+```json
+{ "ok": true, "usd_daily": 0.12, "usd_weekly": 0.83, "usd_total": 42.5, "free_tier": false }
+```
+
+```
+python clawdmeter_daemon.py --openrouter --push-to <device>
+```
+
 ## Codex CLI quota (optional, off by default)
 
 Pushes your ChatGPT-plan Codex CLI rate-limit usage to
@@ -678,6 +695,13 @@ python clawdmeter_daemon.py --antigravity --push-to <device>
 --zai-key KEY       z.ai API key. Env: CLAWDMETER_ZAI_KEY. Required for
                     --zai to do anything.
 --zai-interval N    seconds between z.ai quota refreshes (default 300)
+--openrouter        enable OpenRouter dollar-spend push -- lightweight key
+                    read, no per-call cost
+--no-openrouter     disable the OpenRouter feature (overrides a remembered --openrouter)
+--openrouter-key KEY  OpenRouter API key. Env: CLAWDMETER_OPENROUTER_KEY;
+                    fallback: ~/.openrouter_dot_ai_key. Required for
+                    --openrouter to do anything.
+--openrouter-interval N  seconds between OpenRouter spend refreshes (default 300)
 --codex             enable Codex CLI quota push -- needs `codex login`
                     already done on this machine. Rides your ChatGPT
                     plan's included usage; no separate API key or cost
