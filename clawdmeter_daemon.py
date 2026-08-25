@@ -2197,7 +2197,7 @@ def _codex_rpc_call() -> dict | None:
         return None
     try:
         p = subprocess.Popen(
-            [codex_bin, "-s", "read-only", "-a", "untrusted", "app-server"],
+            [codex_bin, "-s", "read-only", "-a", "never", "app-server"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, bufsize=1,
         )
