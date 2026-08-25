@@ -187,7 +187,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now clawdmeter
 ```
 
-Two things a headless box needs that a desktop session gets for free:
+Three things a headless box needs that a desktop session gets for free:
 
 - **`loginctl enable-linger $(whoami)`** (run once, as a normal user, not
   root) — without this, `--user` services stop the moment your SSH session
@@ -201,6 +201,20 @@ Two things a headless box needs that a desktop session gets for free:
   the unit instead of pasting the token into `ExecStart` — add
   `EnvironmentFile=%h/.config/clawdmeter/token.env` under `[Service]`
   above.
+- **`systemd --user` services run with a minimal PATH** that does NOT include
+  `~/.local/bin` or npm global directories. This matters if you use features
+  that shell out to external CLIs — `codex` (Codex quota) and `trans`
+  (translate-shell for non-English calendar titles) will be silently "not
+  found" (Codex reports no rate limits, `trans` is simply skipped). Fix: add
+  an explicit `Environment=PATH=` line under `[Service]` with the full path,
+  e.g.:
+
+  ```
+  Environment=PATH=/home/YOU/.local/bin:/home/YOU/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  ```
+
+  (macOS LaunchAgents and Windows autostart don't have this problem — this
+  is Linux-specific to systemd.)
 
 Useful commands:
 
@@ -412,16 +426,12 @@ first).
 
 Install it:
 
-```bash
-# macOS
-brew install translate-shell
-
-# Debian/Ubuntu/Raspberry Pi OS
-sudo apt install translate-shell
-
-# Other distros / no package manager: see the official install docs
-# https://github.com/soimort/translate-shell#installation
-```
+| OS | Installation |
+|----|---------------|
+| macOS | `brew install translate-shell` |
+| Debian/Ubuntu/Raspberry Pi OS | `sudo apt install translate-shell` |
+| Other Linux (no package manager) | Clone and build (requires `gawk`):<br>`git clone --depth 1 https://github.com/soimort/translate-shell.git && cd translate-shell && gawk -f build.awk build && cp build/trans ~/.local/bin/trans` |
+| Windows | Works under WSL (use Linux instructions above) or skip it (titles are stripped device-side instead) |
 
 **Nothing to configure — no flag, no env var.** If `trans` isn't found on
 `PATH`, the daemon logs one line the first time it would've needed it
