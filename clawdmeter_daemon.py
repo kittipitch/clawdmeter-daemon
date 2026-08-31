@@ -625,16 +625,18 @@ def poll_api(token: str) -> tuple[dict | None, bool]:
     if resp.status_code in (401, 403):
         return None, True
     if resp.status_code >= 400:
-        log(f"API HTTP {resp.status_code}: {resp.text[:200]}")
-        # A 429 rate_limit_error here means the account's own usage window is
-        # exhausted -- and it will KEEP 429ing every poll until the window
-        # resets, because the quota check itself is an API call. Without this,
-        # the screen freezes on the last pre-limit percentage (e.g. 97%) while
-        # real usage is full -- actively misleading. Signal do_poll() so it can
-        # show "full" instead (reset time inferred from the last good poll).
+        # A 429 rate_limit_error means the usage window itself is exhausted --
+        # and it will KEEP 429ing every poll (the quota check is an API call),
+        # so freezing on the last good payload would show e.g. 97% forever
+        # while real usage is full. Anthropic still sends the full
+        # anthropic-ratelimit-unified-* header set on the 429 (verified live:
+        # real utilization AND reset epochs for both windows), so fall through
+        # and parse those like a success -- real numbers, nothing inferred.
         if resp.status_code == 429 and "rate_limit_error" in resp.text:
-            return {"ok": False, "limit": True}, False
-        return None, False
+            log("429 rate_limit_error - parsing real utilization from response headers")
+        else:
+            log(f"API HTTP {resp.status_code}: {resp.text[:200]}")
+            return None, False
 
     now = time.time()
 
@@ -650,7 +652,9 @@ def poll_api(token: str) -> tuple[dict | None, bool]:
 
     def pct(util):
         try:
-            return int(round(float(util) * 100))
+            # 429 responses can report >1.0 utilization (e.g. 1.05); the
+            # screen is a 0..100 meter, so clamp here rather than send >100.
+            return max(0, min(100, int(round(float(util) * 100))))
         except ValueError:
             return 0
 
@@ -662,12 +666,6 @@ def poll_api(token: str) -> tuple[dict | None, bool]:
         "st": hdr("anthropic-ratelimit-unified-5h-status", "unknown"),
         "ok": True,
     }
-    # Absolute reset epochs (internal; the device's JSON filter drops unknown
-    # keys). Kept so a 429 limit streak can keep counting the reset down from
-    # the last successful check instead of freezing on stale minutes.
-    for mins_key, ts_key in (("sr", "srt"), ("wr", "wrt")):
-        if payload[mins_key] > 0:
-            payload[ts_key] = now + payload[mins_key] * 60.0
     return payload, False
 
 
@@ -679,33 +677,6 @@ def do_poll() -> None:
         state.set_payload({"ok": False})
         return
     payload, auth_failed = poll_api(token)
-    if isinstance(payload, dict) and payload.get("limit"):
-        # Usage window exhausted (see poll_api): show FULL, not the frozen
-        # last-good percentage. Reset minutes keep counting down, inferred
-        # from the absolute epochs stored by the last successful poll.
-        now = time.time()
-        merged = state.get_payload()
-        if not merged.get("ok"):
-            merged = {"s": 100, "sr": 0, "w": 100, "wr": 0}
-        else:
-            # A 429 on a fresh request means the *5h* window is what blocked
-            # it (7d-only exhaustion shows in the header pct first). Keep the
-            # 7d reading from the last good poll unless it was already ~full.
-            if merged.get("w", 0) >= 90:
-                merged["w"] = 100
-            merged["s"] = 100
-            for mins_key, ts_key in (("sr", "srt"), ("wr", "wrt")):
-                ts = merged.get(ts_key)
-                if isinstance(ts, (int, float)):
-                    remaining = (ts - now) / 60.0
-                    merged[mins_key] = int(round(remaining)) if remaining > 0 else 0
-        merged["st"] = "limit"
-        merged["ok"] = True
-        log(f"429 = usage window full; showing 100% "
-            f"(5h resets in {merged.get('sr', 0)}m, 7d at {merged.get('w', 0)}%)")
-        state.set_payload(merged)
-        state.set_status("Connected")
-        return
     if auth_failed:
         state.set_status("Refreshing token...")
         creds = _read_credentials_file()
