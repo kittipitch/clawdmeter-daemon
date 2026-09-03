@@ -752,6 +752,23 @@ device's own web UI (Update tab) instead: pushes from any other address are
 then ignored. Nothing to configure on the daemon side for this -- it's
 purely a device-side filter.
 
+**If you set it, know how it fails.** A mismatch rejects every push with
+`HTTP 403`, and the daemon log is where you'll see it -- while the device
+looks perfectly healthy over HTTP, because only the push endpoints are
+filtered. It bites hardest on a **multi-homed daemon host**: the address the
+device sees is the source address the kernel picked for that route, not
+whichever of your machine's IPs you had in mind. A Raspberry Pi with both
+`eth0` and `wlan0` in one `/23` will happily send from the wired address
+while you filled in the wireless one. Check what the device will actually
+see before setting it:
+
+```bash
+ip route get <device-ip>      # Linux: the "src" field is what the device sees
+```
+
+Leave it empty (the default) unless you actually want the filter -- it is
+accidental-write protection, not security.
+
 ### z.ai quota
 
 Pushes z.ai's own account quota (5h cycle % and a token-usage %) to a
@@ -785,6 +802,18 @@ z.ai-side change, that's why.
   Inbound -Protocol TCP -LocalPort 8787 -Action Allow`).
 - **Device IP keeps changing.** Push to its mDNS name (e.g. `smalltv.local`) or set
   a DHCP reservation.
+- **Every push logs `HTTP 403`.** The device is rejecting the daemon by source IP:
+  you (or a past you) set a **Daemon source IP** in its web UI and the daemon is
+  reaching it from a different address. Nothing on the daemon side is broken -- the
+  device answers `/api/status` and the web UI normally, because only the push
+  endpoints are filtered. Confirm with `ip route get <device-ip>` (the `src` field is
+  the address the device actually sees), then either correct the field or clear it:
+  `curl -X POST -H 'Content-Type: application/json' -d '{"daemonIp":""}'
+  http://<device>/api/config`. See [Daemon source IP](#daemon-source-ip-optional-device-side).
+- **A push succeeded once and then the log went quiet.** That is success, not a
+  stall. `Pushing to <url> OK` is logged only the *first* time a given URL
+  succeeds; after that only failures are logged. A URL that logs `OK` a second
+  time dropped out and recovered in between.
 - **Several SmallTVs on one network.** With firmware **2.8.0+** just run `--push`:
   each device advertises itself over mDNS (`_clawdmeter._tcp`) and the daemon
   discovers them all and pushes the same usage to every one, no per-device address.
