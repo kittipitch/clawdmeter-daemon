@@ -45,8 +45,9 @@ a copied refresh token.
 | Calendar **OAuth** token | **Unreliable** — worked once, failed once with `invalid_grant` |
 | `agy` / Antigravity session | **Unverified** — sign in per machine |
 
-The Codex case is mechanically sound as well as observed: two machines sharing one
-refresh token produce `refresh_token_reused`.
+What was actually observed for Codex is `401 token expired` on the copy.
+(`refresh_token_reused` has been seen too, but after a client was killed mid-exchange
+— not proven to be the cross-machine mechanism.)
 
 ---
 
@@ -77,8 +78,13 @@ chmod 600 /path/to/clawdmeter-daemon/.env
 ```
 
 **Use the env token on any unattended machine.** The macOS Keychain branch has no
-refresh path of its own, and the Linux fallback may spawn `claude` to refresh, which
-has been seen to hang with stale credentials.
+refresh path of its own, and the Linux fallback spawns `claude` to refresh (with a
+30 s timeout), which is more moving parts than an unattended box needs.
+
+That said, the Keychain path is a *proven* configuration on a laptop: one working
+macOS deployment runs under launchd with **no** `CLAUDE_CODE_OAUTH_TOKEN` at all,
+purely on the `Claude Code-credentials` Keychain item, kept fresh by the user's own
+interactive `claude` use. Laptop: Keychain is fine. Headless: use the env token.
 
 ⚠ **A missing token is silent in the log.** There is no "no token" line — the only
 symptoms are `{"ok":false}` pushes and the tray/console status. Check for a real
@@ -197,6 +203,12 @@ grep -h 'authenticated via keyring\|effective: file' ~/.gemini/antigravity-cli/l
 Note the token file is **not** a reliable sign of anything: it exists only when a
 keyring save fell back, so it can be absent on a perfectly healthy signed-in Mac.
 
+**Checking auth on a headless Linux box** (where "run it in a GUI terminal" is not
+an option): use `tmux new-session 'agy models'` — sign-in needs a TTY anyway. With
+no secret service present the token store is the file rather than a keyring, so the
+Keychain caveat above should not apply there. Unverified; stated so you know which
+part is assumption.
+
 ### If Antigravity returns `{"ok": False}` and nothing else
 
 Three different causes produce that same empty result, and fixing one changes
@@ -226,8 +238,9 @@ as a suspect; the cost of that default is simply unknown.
 
 ## z.ai
 
-Static API key. Pass `--zai-key`, or set `CLAWDMETER_ZAI_KEY` in the environment /
-`.env` / `EnvironmentFile=`. Copyable between machines.
+Static API key from your z.ai account (profile → **API Keys**). Pass `--zai-key`, or
+set `CLAWDMETER_ZAI_KEY` in the environment / `.env` / `EnvironmentFile=`. Copyable
+between machines — but prefer the env file over the flag, which is visible in `ps`.
 
 ## OpenRouter
 
@@ -298,9 +311,14 @@ Testing. Publishing it to Production removes that — which was impossible for o
 project here because an unrelated client in the same project used a non-HTTPS
 redirect URI. Use a fresh project, or the service account.
 
-**Headless?** `--calendar-auth` binds a random loopback port and prints a URL. Over
-SSH, forward that port (`ssh -L <port>:127.0.0.1:<port> host`) and open the URL in a
-local browser. `--calendar-sync-color` needs this same OAuth login, so a
+**Headless?** `--calendar-auth` binds a **random** loopback port, so the forward
+cannot be set up in advance. Two sessions:
+
+1. `ssh host`, run `--calendar-auth`, and read the port out of the printed URL
+2. in a second terminal, `ssh -L <port>:127.0.0.1:<port> host`
+3. open that URL in your local browser
+
+`~/.clawdmeter-google-client.json` must already be on the target machine. `--calendar-sync-color` needs this same OAuth login, so a
 service-account-only box cannot set calendar colours.
 
 ---
@@ -320,8 +338,28 @@ Service managers start with a **minimal environment** and do **not** read
 This applies to **launchd as well as systemd** — launchd's default PATH is
 `/usr/bin:/bin:/usr/sbin:/sbin`, with no Homebrew.
 
+A working headless unit, as deployed on a Raspberry Pi (flags trimmed to the ones
+that matter here):
+
 ```ini
-# systemd (Linux): ~/.config/systemd/user/clawdmeter.service
+# ~/.config/systemd/user/clawdmeter.service
+[Service]
+ExecStart=%h/clawdmeter-daemon/.venv/bin/python %h/clawdmeter-daemon/clawdmeter_daemon.py \
+    --push-to <device>.local --no-discover --no-tray --push-interval 30 \
+    --weather --calendar --calendar-id you@gmail.com \
+    --codex --zai --openrouter --antigravity
+EnvironmentFile=%h/.config/clawdmeter/token.env
+Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+```
+
+with `token.env` holding `CLAUDE_CODE_OAUTH_TOKEN`, `CLAWDMETER_ZAI_KEY` and
+`GOOGLE_APPLICATION_CREDENTIALS`. Run **`loginctl enable-linger $USER`** or the
+service dies at logout. On that box `agy` is symlinked into `/usr/local/bin` and
+`codex` comes from `npm -g`, which is an alternative to the `Environment=PATH=`
+line.
+
+```ini
+# generic form
 [Service]
 Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 EnvironmentFile=%h/.config/clawdmeter/token.env
@@ -372,6 +410,9 @@ journalctl --user -u clawdmeter -n 50
 launchctl print gui/$(id -u)/<label> | grep -A5 environment
 tail -50 ~/Library/Logs/clawdmeter.out.log
 ```
+
+macOS has no `timeout(1)` — use `gtimeout` from coreutils, or leave it off — which
+matters only if you hand-test a command.
 
 Success looks like real numbers, not absence of errors: `5h=..% 7d=..%` for Claude,
 `Codex: {...}` for Codex, and `Pushing to http://<device>/api/usage OK`.
