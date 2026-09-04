@@ -120,9 +120,31 @@ Traps, in the order people hit them:
 2. **Signing in to the IDE does not sign in the CLI.** Separate state.
 3. **Sign-in needs a real TTY.** A plain `ssh host 'agy'` dies with
    `bubbletea: could not open TTY`. Over SSH, use `tmux new-session 'agy'`.
-4. **Accept the "trust this folder" prompt**, or unattended polls fail. The daemon
-   spawns `agy` with the service's working directory — `$HOME` under
-   `systemd --user` — so trust `$HOME`.
+4. **The daemon's working directory must be trusted by `agy`.** This is the one
+   that looks exactly like an auth failure and is not. `agy` spawns a cascade
+   session in whatever directory it is launched from, and refuses in an untrusted
+   one — returning an empty result with no distinct error, so the daemon just logs
+   `{"ok": False}`.
+
+   The directory to trust is the **service's working directory**, not your shell's:
+   `WorkingDirectory` in a launchd plist, or `$HOME` by default under
+   `systemd --user`. Check and fix:
+
+   ```bash
+   cat ~/.gemini/antigravity-cli/settings.json     # look at trustedWorkspaces
+   ```
+
+   ```json
+   {
+     "trustedWorkspaces": [
+       "/Users/you",
+       "/Users/you/git_projects/clawdmeter-daemon"
+     ]
+   }
+   ```
+
+   Trusting only `$HOME` is **not** enough if the service runs from a repo
+   directory. Restart the service after editing.
 5. **`lsof` must be on PATH** — the daemon finds the spawned `agy`'s port with it.
 
 ```bash
@@ -157,6 +179,28 @@ on exactly this error for that reason.
 
 To check auth for real, run `agy models` **in a GUI terminal on the machine
 itself**, or look for that token file.
+
+### If Antigravity returns `{"ok": False}` and nothing else
+
+Three different causes produce that same empty result, and fixing one changes
+nothing visible until all three are right. Work through them in order:
+
+1. **Actually signed in?** `agy models` **in a GUI terminal** (not over SSH — see
+   the warning above). Should list models.
+2. **Is the prompt model available on the plan?** The daemon hardcodes
+   `gemini-3.6-flash-low`; it must appear in `agy models`.
+3. **Is the service's working directory in `trustedWorkspaces`?** See above. This
+   was the last blocker in a real setup where the first two were already fine.
+
+Success in the log looks like:
+
+```
+Antigravity: {'ok': True, 'pctPro': 3, 'labelPro': '3.1 Pro', 'rPro': 238, ...}
+```
+
+Note the retry path currently swallows the second attempt's error text, so a
+persistent failure logs only the "retrying once" line and then nothing. If you are
+debugging this, expect no further clue from the log.
 
 The prompt model is hardcoded to `gemini-3.6-flash-low`. It must appear in
 `agy models` for your plan, or every poll fails.
