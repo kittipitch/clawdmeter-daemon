@@ -78,6 +78,13 @@ With no transport flag it defaults to `--push` if `CLAWDMETER_PUSH_URL`
 
 The daemon needs a Claude token. In order it tries:
 
+> **Setting up a new machine?** See **[AUTHENTICATION.md](AUTHENTICATION.md)** for the
+> per-harness token guide — Claude, Codex, Antigravity, z.ai, OpenRouter and Google
+> Calendar — including which credentials can be copied between machines (Claude,
+> z.ai, OpenRouter, Google service account) and which must be re-logged per machine
+> (Codex, Calendar OAuth, Antigravity), plus the PATH/environment traps that make a
+> service manager silently report no data.
+
 1. **`CLAUDE_CODE_OAUTH_TOKEN`** env var — a **long-lived token** from
    `claude setup-token`. This is the robust choice for an always-on daemon: it
    doesn't expire, so there's nothing to refresh.
