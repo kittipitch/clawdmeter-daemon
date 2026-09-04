@@ -13,59 +13,96 @@ fix it before continuing; the failures downstream all look the same
 
 ### 0. Prerequisites
 
+**You need a device already running this firmware.** The daemon only pushes; it
+cannot set one up. That means a SmallTV-family unit flashed with
+[`kittipitch/smalltv-mod`](https://github.com/kittipitch/smalltv-mod) — see that
+repo for hardware variants and flashing. Get its hostname from the device's web UI
+(`/api/config` → `hostname`), which looks like `smalltv-XXXX.local`. Confirm before
+going further:
+
 ```bash
-python3 --version          # must be 3.10+ — 3.9 dies at import on PEP 604 annotations
-git --version
+curl -s http://<device>.local/api/status      # expect JSON with "fw":"smalltv-mod"
 ```
 
-macOS ships Python 3.9 as `/usr/bin/python3`. Install a newer one (python.org or
-Homebrew) and build the venv from *that* explicit path, not from `python3`.
+**Tools.** The daemon shells out to these; none are present on a fresh machine, and
+each needs its own account:
+
+| Tool | Install | Needs |
+|---|---|---|
+| Claude Code | `npm install -g @anthropic-ai/claude-code` | Claude subscription |
+| Codex CLI | `npm install -g @openai/codex@latest` | ChatGPT plan (not an API key) |
+| `agy` (optional) | see README's Antigravity section | Google account; **costs money per poll** |
+
+Only Claude is needed to get started. Skip the others until their step.
+
+**System packages.** On Debian/Ubuntu `git` and the venv module are often absent:
+
+```bash
+sudo apt install git python3-venv
+```
+
+```bash
+python3 --version          # must be 3.10+ — 3.9 dies at import on PEP 604 annotations
+```
+
+macOS ships 3.9 as `/usr/bin/python3`. Install a newer one (python.org or Homebrew)
+and build the venv from **that explicit path**, e.g. `/usr/local/bin/python3.13`.
 
 ```bash
 git clone https://github.com/kittipitch/clawdmeter-daemon.git
 cd clawdmeter-daemon
-python3.13 -m venv .venv          # or whatever 3.10+ you have
-.venv/bin/pip install -r requirements.txt
+python3 -m venv .venv                      # or the explicit 3.10+ path on macOS
+.venv/bin/pip install httpx google-auth python-aqi
 .venv/bin/python clawdmeter_daemon.py --help    # check: prints usage, no traceback
 ```
+
+That is the **headless minimum**. `pip install -r requirements.txt` also works but
+pulls the tray stack (`pystray`, `Pillow`, `pyobjc` on macOS), which a service never
+uses — and on 32-bit ARM `Pillow` may want to compile. Add `zeroconf` only if you
+want mDNS discovery instead of naming the device explicitly.
 
 ### 1. Claude — do this one first
 
 It is the only feature that works with nothing else configured, so it proves the
 whole path (poll → push → device) before other variables are added.
 
-**Headless box (Pi, server): use an environment token.**
+**Laptop you actually use:** run `claude` once and complete `/login`. That is enough
+— the daemon reads Claude Code's own credentials (macOS Keychain, or
+`~/.claude/.credentials.json` on Linux). This is a proven configuration.
+
+**Headless box (Pi, server):** use an environment token instead.
 
 ```bash
-claude setup-token                 # on ANY machine with a browser; prints sk-ant-oat...
+claude setup-token         # on ANY machine with a browser; prints sk-ant-oat...
 ```
 
-That token is long-lived and **copyable**, so mint it on your laptop and move it.
+Long-lived and **copyable**, so mint it on your laptop and move it.
 
 ```bash
 umask 077
 printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' 'sk-ant-oat...' > .env
-chmod 600 .env
 ```
 
 One `KEY=VALUE` per line, **no `export`**, and **no line break inside the token** —
-a wrapped paste is skipped silently and you get a daemon with no token and no error.
-
-**Laptop you actually use:** you can skip the token entirely and let it use Claude
-Code's own login (macOS Keychain / `~/.claude/.credentials.json` on Linux). Proven
-in practice. But if the machine is unattended, use the token.
+a wrapped paste is skipped silently, giving a daemon with no token and no error.
 
 ```bash
-.venv/bin/python clawdmeter_daemon.py --no-tray --push \
-    --push-to <device>.local --no-discover
+.venv/bin/python clawdmeter_daemon.py --push-to <device>.local --no-discover --no-tray
 ```
 
-**Check:** the log shows `5h=..% 7d=..%` and `Pushing to http://<device>/api/usage OK`.
-Numbers, not absence of errors — a missing token logs *nothing at all*.
+`--push-to` alone selects push mode (`--push` is redundant beside it).
+`--no-discover` stops mDNS browsing so only your named device is pushed to.
+`--no-tray` is optional on a headless Linux box — it falls back to console
+automatically — but harmless everywhere.
+
+**Check:** `5h=..% 7d=..%` and `Pushing to http://<device>/api/usage OK`. Look for
+numbers, not the absence of errors: a missing token logs **nothing at all**. The
+`Pushing to … OK` line prints only on the *first* success per URL, so it will not
+repeat every cycle.
 
 Stop here until that works. Everything below is additive.
 
-### 2. Codex (free, no key)
+### 2. Codex (free with a ChatGPT plan)
 
 ```bash
 codex login                  # or: codex login --device-auth   (headless / SSH)
@@ -78,28 +115,35 @@ it wipes the session before completing the new one.
 
 ### 3. Weather (no credential at all)
 
-Set the location **on the device**, in its Agenda/weather tab (lat/lon). The daemon
-reads it from the device, so there is nothing to configure locally.
+Set the location **on the device**, in its Agenda & weather tab (lat/lon). The
+daemon reads it from `/api/config`; there is no daemon-side fallback.
 
 **Check:** add `--weather`; log shows `Weather: {'ok': True, 'tempC': ...}`.
+If you see *neither* a `Weather:` line nor an error, the device's lat/lon are still
+0/0 — that case is silent.
 
 ### 4. Google Calendar (service account)
 
-Longest step. Full detail below in [Google Calendar](#google-calendar) — the summary:
-create a project, enable the Calendar API, create a service account with **no
-roles**, download a **JSON key**, then **share your calendar with the service
-account's `client_email`** using **"See event details"**. That share step is the one
-everybody misses.
+Longest step; full detail in [Google Calendar](#google-calendar). Summary: create a
+project, enable the Calendar API, create a service account with **no roles**,
+download a **JSON key**, then **share your calendar with the service account's
+`client_email`** using **"See event details"**. That share step is the one everybody
+misses.
 
 **Check:** add `--calendar --calendar-id you@gmail.com`; log shows
 `Calendar: N upcoming, next = '...'`.
 
 ### 5. Antigravity — optional, and it costs money
 
-⚠ Every poll fires a **real billable prompt**. Skip this unless you want the page.
+⚠ Every poll fires a **real billable prompt**. Skip unless you want the page. Note
+that feature flags are remembered in `~/.clawdmeter-daemon.json`, so once enabled it
+stays on until you pass `--no-antigravity`.
+
+`agy` must trust the directory the **service** will run from — decide that now
+(step 6 uses the repo checkout; `systemd --user` defaults to `$HOME`):
 
 ```bash
-cd <the directory the service will run from>
+cd ~/clawdmeter-daemon       # the future WorkingDirectory
 agy                          # bare, in a GUI terminal; accept "trust this folder"
 ```
 
@@ -109,22 +153,64 @@ agy                          # bare, in a GUI terminal; accept "trust this folde
 ### 6. Only now, install it as a service
 
 Get everything working in the foreground first. A service adds a minimal
-environment, a different working directory, and no shell profile — three new
-failure modes at once, all silent.
+environment, a different working directory, and no shell profile — three new failure
+modes at once, all silent.
 
-See [PATH and environment](#path-and-environment-the-quiet-failure) for the unit and
-plist. The three things that break a service which worked fine by hand:
+**Linux:** use the complete unit in
+[README → Linux headless](README.md#linux-headless--no-gui-session-systemd---user-service),
+and add the `EnvironmentFile=` and `Environment=PATH=` lines shown in
+[PATH and environment](#path-and-environment-the-quiet-failure). Then
+`loginctl enable-linger $USER`, or it dies at logout.
 
-- **PATH** — `claude`, `codex`, `agy`, `lsof`, `trans` are not found. Include
-  `/usr/sbin` (macOS `lsof`).
-- **Working directory** — `agy` must trust it; a `--install` plist has none and runs
-  from `/`.
-- **Secrets** — a shell profile is never read. Use `.env` or `EnvironmentFile=`.
+**macOS:** write `~/Library/LaunchAgents/com.giovi321.clawdmeter.plist` yourself —
+do **not** use `--install`, which writes a plist that cannot work beyond Claude
+usage (no `WorkingDirectory`, no PATH). This one is proven:
 
-On Linux also run `loginctl enable-linger $USER`, or the service dies at logout.
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.giovi321.clawdmeter</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOU/clawdmeter-daemon/.venv/bin/python</string>
+        <string>/Users/YOU/clawdmeter-daemon/clawdmeter_daemon.py</string>
+        <string>--no-tray</string>
+        <string>--push-to</string><string>DEVICE.local</string>
+        <string>--no-discover</string>
+        <string>--codex</string>
+        <string>--weather</string>
+    </array>
+    <key>WorkingDirectory</key><string>/Users/YOU/clawdmeter-daemon</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key><string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+    <key>ThrottleInterval</key><integer>30</integer>
+    <key>ProcessType</key><string>Background</string>
+    <key>StandardOutPath</key><string>/Users/YOU/Library/Logs/clawdmeter.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/YOU/Library/Logs/clawdmeter.err.log</string>
+</dict>
+</plist>
+```
 
-**Check:** restart the machine, wait a minute, and confirm the device still updates.
-That is the only test that proves the service survives a reboot.
+```bash
+plutil -lint ~/Library/LaunchAgents/com.giovi321.clawdmeter.plist
+launchctl bootout gui/$(id -u)/com.giovi321.clawdmeter 2>/dev/null
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.giovi321.clawdmeter.plist
+launchctl print gui/$(id -u)/com.giovi321.clawdmeter | grep -E 'state|pid'
+```
+
+`bootout` then `bootstrap` immediately can race — wait for it to actually unload, or
+you get `Bootstrap failed: 5: Input/output error`.
+
+**Check:** reboot. On **Linux** with linger enabled the service returns on its own.
+On **macOS** a LaunchAgent starts at **login**, not at boot — so log back in, then
+wait a minute. For a genuinely unattended Mac you need auto-login, or a
+LaunchDaemon (not covered here).
 
 ## Where the daemon looks for secrets
 

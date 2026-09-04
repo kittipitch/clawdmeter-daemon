@@ -101,7 +101,7 @@ claude setup-token
 ```
 
 Prints a token starting `sk-ant-oat…`. Either add it to your shell profile
-(`~/.zshrc` for the default shell):
+(`~/.zshrc (interactive use only — a service never reads it; see AUTHENTICATION.md)` for the default shell):
 
 ```sh
 export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat...your-token..."
