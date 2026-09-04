@@ -142,6 +142,22 @@ and in `~/.gemini/antigravity-cli/log/cli-*.log`:
 error getting token source: You are not logged into Antigravity.
 ```
 
+⚠ **That message lies when run headlessly.** With no Aqua session — over SSH, or
+under launchd — `agy`'s own Keychain read times out after 10 s and it reports "not
+logged into Antigravity" **even though the account is authenticated**. So a bare
+`ssh host 'agy models'` is not a valid auth check and will send you chasing a
+sign-in you already did.
+
+What actually happens: a background goroutine in that same process still completes
+an OAuth refresh over the network, and because its Keychain *write* also times out,
+it falls back to a plaintext token file at
+`~/.gemini/antigravity-cli/antigravity-oauth-token`. A second invocation, started
+after the first has fully exited, picks that healed file up. The daemon retries once
+on exactly this error for that reason.
+
+To check auth for real, run `agy models` **in a GUI terminal on the machine
+itself**, or look for that token file.
+
 The prompt model is hardcoded to `gemini-3.6-flash-low`. It must appear in
 `agy models` for your plan, or every poll fails.
 
@@ -181,7 +197,8 @@ it, the key is silently ignored.
 5. **Share your calendar with the service account.** Copy `client_email` from the
    JSON, then in [Google Calendar](https://calendar.google.com) → calendar
    **Settings and sharing** → **Share with specific people** → add that email with
-   **"See all event details"**. Skipping this is the most common failure: everything
+   **"See event details"**. (There is no "See all event details" tier — the
+   options are "See only free/busy", "See event details", then two edit tiers.) Skipping this is the most common failure: everything
    looks configured and no events ever appear.
 6. Give the calendar id — either `--calendar-id you@gmail.com`, **or** fill in
    **Calendar ID(s)** in the device's own Agenda tab, which the daemon reads each
