@@ -2634,11 +2634,19 @@ def poll_antigravity(_retry: bool = True) -> dict:
     us = result.get("userStatus") or {}
     cascade_data = us.get("cascadeModelConfigData") or {}
     error_message = cascade_data.get("errorMessage") or ""
-    if _retry and ("not logged into antigravity" in error_message.lower()
-                    or "getting token source" in error_message.lower()):
-        log("Antigravity: keyring read timed out headlessly (transient) - "
-            "retrying once, the token file should be healed by now")
-        return poll_antigravity(_retry=False)
+    if error_message:
+        if _retry and ("not logged into antigravity" in error_message.lower()
+                        or "getting token source" in error_message.lower()):
+            log("Antigravity: keyring read timed out headlessly (transient) - "
+                "retrying once, the token file should be healed by now")
+            return poll_antigravity(_retry=False)
+        # Anything else, or the same error on the retry, is a real failure --
+        # say why. Staying silent here cost a long debugging session: the
+        # symptom of an untrusted working directory is byte-identical to a
+        # failed login ({"ok": False}, no further output), and with the retry
+        # swallowing this text there was nothing in the log to tell them apart.
+        log(f"Antigravity: no quota data - {error_message.strip()}"
+            + ("" if _retry else " (this was the retry)"))
     configs = cascade_data.get("clientModelConfigs") or []
 
     # Deterministic pick per family, NOT "first isRecommended" -- confirmed
