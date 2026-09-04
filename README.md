@@ -330,10 +330,12 @@ password (see step 4).
 4. Note the service account's email from the file (`client_email`, looks like
    `something@your-project.iam.gserviceaccount.com`). In
    [Google Calendar](https://calendar.google.com) → your calendar's settings
-   → **Share with specific people** → add that email, permission **"See all
-   event details"**. This is the only way a service account can see a
-   personal Gmail calendar — there's no admin console to grant broader access
-   on a non-Workspace account.
+   → **Share with specific people** → add that email, permission **"See event
+   details"** (confirmed live: there is no separate read-only "see all" tier —
+   the options are "See only free/busy", "See event details", then two "Make
+   changes..." edit tiers; pick "See event details"). This is the only way a
+   service account can see a personal Gmail calendar — there's no admin
+   console to grant broader access on a non-Workspace account.
 5. `pip install google-auth` (already in `requirements.txt`).
 6. Find your calendar's ID — for your primary calendar it's just your Gmail
    address. Then enable with an **explicit `--calendar-id`**:

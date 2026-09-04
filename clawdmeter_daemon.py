@@ -2510,7 +2510,7 @@ def _antigravity_wait_for_status(pid: int, deadline: float) -> dict | None:
     return None
 
 
-def poll_antigravity() -> dict:
+def poll_antigravity(_retry: bool = True) -> dict:
     """Antigravity CLI (`agy`) quota. UNLIKE Codex, `agy`'s local server
     only reports real quota once a cascade/agent session has actually run
     -- confirmed live that a cheap no-op (`agy models`) leaves
@@ -2575,7 +2575,23 @@ def poll_antigravity() -> dict:
     wider than the device's shared header row has room for at a readable
     size next to the % value -- the device compensates by shrinking that
     page's value text, not by shortening the label (an earlier 2-char
-    "Pr"/"Fl" abbreviation was tried and explicitly reverted)."""
+    "Pr"/"Fl" abbreviation was tried and explicitly reverted).
+
+    One automatic retry on a specific transient race, confirmed live: `agy`'s
+    own Keychain read for its stored token times out after 10s when run
+    headlessly (no Aqua session -- classic launchd-vs-Keychain problem), which
+    surfaces as cascadeModelConfigData.errorMessage containing "not logged
+    into Antigravity" even though the account IS authenticated. A background
+    goroutine inside that same `agy` process still completes an OAuth refresh
+    over the network and -- since its own Keychain *write* also times out --
+    falls back to a plaintext token file (~/.gemini/antigravity-cli/
+    antigravity-oauth-token) before the process exits. So a second `agy`
+    invocation, started only after the first one has fully exited, reliably
+    picks up that healed file token (confirmed live). Retrying is bounded to
+    exactly once (`_retry` guards this) specifically for this error text --
+    NOT a blanket retry on any {"ok": False}, since every real invocation is a
+    paid prompt and most other failure causes (missing binary, never
+    authenticated at all) would just pay twice for nothing."""
     agy_bin = shutil.which("agy")
     if not agy_bin:
         log("Antigravity: `agy` not found on PATH")
@@ -2616,7 +2632,14 @@ def poll_antigravity() -> dict:
         return {"ok": False}
 
     us = result.get("userStatus") or {}
-    configs = (us.get("cascadeModelConfigData") or {}).get("clientModelConfigs") or []
+    cascade_data = us.get("cascadeModelConfigData") or {}
+    error_message = cascade_data.get("errorMessage") or ""
+    if _retry and ("not logged into antigravity" in error_message.lower()
+                    or "getting token source" in error_message.lower()):
+        log("Antigravity: keyring read timed out headlessly (transient) - "
+            "retrying once, the token file should be healed by now")
+        return poll_antigravity(_retry=False)
+    configs = cascade_data.get("clientModelConfigs") or []
 
     # Deterministic pick per family, NOT "first isRecommended" -- confirmed
     # live this account has THREE entries with isRecommended:true
