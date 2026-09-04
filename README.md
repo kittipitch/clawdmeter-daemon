@@ -78,7 +78,9 @@ With no transport flag it defaults to `--push` if `CLAWDMETER_PUSH_URL`
 
 The daemon needs a Claude token. In order it tries:
 
-> **Setting up a new machine?** See **[AUTHENTICATION.md](AUTHENTICATION.md)** for the
+> **Setting up a new machine?** Start with **[AUTHENTICATION.md](AUTHENTICATION.md)** —
+> it opens with an ordered start-to-finish walkthrough (get Claude working first,
+> then add one feature at a time, install the service last), and then serves as the
 > per-harness token guide — Claude, Codex, Antigravity, z.ai, OpenRouter and Google
 > Calendar — including which credentials can be copied between machines (Claude,
 > z.ai, OpenRouter, Google service account) and which must be re-logged per machine

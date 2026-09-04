@@ -5,6 +5,127 @@ This is the per-harness reference: where the credential comes from, where it is
 stored, whether it survives being copied to another machine, and how to tell it
 worked.
 
+## New machine, start to finish
+
+Do these in order — the order matters, and each step has a check. If a check fails,
+fix it before continuing; the failures downstream all look the same
+(`{"ok": false}`, a blank page on the device) and become hard to tell apart.
+
+### 0. Prerequisites
+
+```bash
+python3 --version          # must be 3.10+ — 3.9 dies at import on PEP 604 annotations
+git --version
+```
+
+macOS ships Python 3.9 as `/usr/bin/python3`. Install a newer one (python.org or
+Homebrew) and build the venv from *that* explicit path, not from `python3`.
+
+```bash
+git clone https://github.com/kittipitch/clawdmeter-daemon.git
+cd clawdmeter-daemon
+python3.13 -m venv .venv          # or whatever 3.10+ you have
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python clawdmeter_daemon.py --help    # check: prints usage, no traceback
+```
+
+### 1. Claude — do this one first
+
+It is the only feature that works with nothing else configured, so it proves the
+whole path (poll → push → device) before other variables are added.
+
+**Headless box (Pi, server): use an environment token.**
+
+```bash
+claude setup-token                 # on ANY machine with a browser; prints sk-ant-oat...
+```
+
+That token is long-lived and **copyable**, so mint it on your laptop and move it.
+
+```bash
+umask 077
+printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' 'sk-ant-oat...' > .env
+chmod 600 .env
+```
+
+One `KEY=VALUE` per line, **no `export`**, and **no line break inside the token** —
+a wrapped paste is skipped silently and you get a daemon with no token and no error.
+
+**Laptop you actually use:** you can skip the token entirely and let it use Claude
+Code's own login (macOS Keychain / `~/.claude/.credentials.json` on Linux). Proven
+in practice. But if the machine is unattended, use the token.
+
+```bash
+.venv/bin/python clawdmeter_daemon.py --no-tray --push \
+    --push-to <device>.local --no-discover
+```
+
+**Check:** the log shows `5h=..% 7d=..%` and `Pushing to http://<device>/api/usage OK`.
+Numbers, not absence of errors — a missing token logs *nothing at all*.
+
+Stop here until that works. Everything below is additive.
+
+### 2. Codex (free, no key)
+
+```bash
+codex login                  # or: codex login --device-auth   (headless / SSH)
+```
+
+**Check:** add `--codex`; log shows `Codex: {'ok': True, ...}`.
+
+⚠ Never run bare `codex login` "just to look" on a machine with a working session —
+it wipes the session before completing the new one.
+
+### 3. Weather (no credential at all)
+
+Set the location **on the device**, in its Agenda/weather tab (lat/lon). The daemon
+reads it from the device, so there is nothing to configure locally.
+
+**Check:** add `--weather`; log shows `Weather: {'ok': True, 'tempC': ...}`.
+
+### 4. Google Calendar (service account)
+
+Longest step. Full detail below in [Google Calendar](#google-calendar) — the summary:
+create a project, enable the Calendar API, create a service account with **no
+roles**, download a **JSON key**, then **share your calendar with the service
+account's `client_email`** using **"See event details"**. That share step is the one
+everybody misses.
+
+**Check:** add `--calendar --calendar-id you@gmail.com`; log shows
+`Calendar: N upcoming, next = '...'`.
+
+### 5. Antigravity — optional, and it costs money
+
+⚠ Every poll fires a **real billable prompt**. Skip this unless you want the page.
+
+```bash
+cd <the directory the service will run from>
+agy                          # bare, in a GUI terminal; accept "trust this folder"
+```
+
+**Check:** `agy models` lists models, then add `--antigravity
+--antigravity-interval 3600` and look for `Antigravity: {'ok': True, ...}`.
+
+### 6. Only now, install it as a service
+
+Get everything working in the foreground first. A service adds a minimal
+environment, a different working directory, and no shell profile — three new
+failure modes at once, all silent.
+
+See [PATH and environment](#path-and-environment-the-quiet-failure) for the unit and
+plist. The three things that break a service which worked fine by hand:
+
+- **PATH** — `claude`, `codex`, `agy`, `lsof`, `trans` are not found. Include
+  `/usr/sbin` (macOS `lsof`).
+- **Working directory** — `agy` must trust it; a `--install` plist has none and runs
+  from `/`.
+- **Secrets** — a shell profile is never read. Use `.env` or `EnvironmentFile=`.
+
+On Linux also run `loginctl enable-linger $USER`, or the service dies at logout.
+
+**Check:** restart the machine, wait a minute, and confirm the device still updates.
+That is the only test that proves the service survives a reboot.
+
 ## Where the daemon looks for secrets
 
 Two separate mechanisms, easy to confuse:
