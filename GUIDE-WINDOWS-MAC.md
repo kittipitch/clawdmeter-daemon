@@ -94,6 +94,17 @@ This creates a self-contained `.venv` here (with `--system-site-packages` so
 the tray can still see native GTK/AppIndicator-equivalent bits), installs
 everything, and registers a LaunchAgent so the daemon starts at login.
 
+> ⚠ **The LaunchAgent it writes covers Claude usage only.** It sets no
+> `WorkingDirectory` (so the daemon runs from `/`) and no `PATH`, which the
+> Codex, Antigravity, calendar-translation and weather features need. If you
+> want anything beyond the usage meter, write the plist by hand — there is a
+> complete working one in [AUTHENTICATION.md](AUTHENTICATION.md) under
+> "New machine, start to finish", step 6.
+>
+> It also builds the venv from whatever `python3` resolves to, which on a stock
+> macOS is **3.9** — too old; the daemon dies at import. Set `PYTHON` to a 3.10+
+> interpreter first, e.g. `PYTHON=/usr/local/bin/python3.13 ./install.sh`.
+
 ### 4. Get a Claude token
 
 ```sh
@@ -101,7 +112,10 @@ claude setup-token
 ```
 
 Prints a token starting `sk-ant-oat…`. Either add it to your shell profile
-(`~/.zshrc (interactive use only — a service never reads it; see AUTHENTICATION.md)` for the default shell):
+(`~/.zshrc` for the default shell). Note this works for running the daemon by
+hand only — a service manager never reads a shell profile, so if you later
+install it to start automatically, move the token to `.env`; see
+[AUTHENTICATION.md](AUTHENTICATION.md):
 
 ```sh
 export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat...your-token..."

@@ -279,7 +279,7 @@ Every transport delivers the same object:
 
 ## Google Calendar (optional, off by default)
 
-Polls the next upcoming event on a Google Calendar and pushes it to
+Polls upcoming events on a Google Calendar and pushes them to
 `http://<device>/api/calendar`, alongside the usage payload above. Separate
 feature, separate on/off flag — doesn't change anything about the usage side.
 
@@ -287,13 +287,13 @@ feature, separate on/off flag — doesn't change anything about the usage side.
 { "ok": true, "summary": "Team sync", "start": "2026-07-27T10:00:00+01:00", "end": "2026-07-27T11:00:00+01:00", "allDay": false }
 ```
 
-`summary`/`start` are `null` when there's no upcoming event. `end` mirrors
-`start` (timed `dateTime` or all-day `date`) so multi-day events can be told
-apart from single-day ones on the device; for all-day events it's Google's
-exclusive end date, shipped raw. Field names are
-spelled out rather than terse like the usage contract's `s`/`w` — there's no
-firmware consumer for this yet (see the smalltv-mod project's own notes), so
-expect this shape to firm up once that side is built.
+The real payload is `{"ok": true, "events": [...]}` with up to **6** events, not
+the single-event shape shown above — the firmware's agenda mode splits them across
+two rotating pages. `end` mirrors `start` (timed `dateTime` or all-day `date`) so
+multi-day events can be told apart from single-day ones; for all-day events it is
+Google's exclusive end date, shipped raw. Field names are spelled out rather than
+terse like the usage contract's `s`/`w`. This is live on every deployed unit — the
+"no firmware consumer yet" note that used to be here is long out of date.
 
 Two ways to authenticate. **Use the service account** unless you have a
 specific reason not to — the interactive-OAuth path below is real but its
@@ -849,7 +849,9 @@ z.ai-side change, that's why.
   stall. `Pushing to <url> OK` is logged only the *first* time a given URL
   succeeds; after that only failures are logged. A URL that logs `OK` a second
   time dropped out and recovered in between.
-- **Several SmallTVs on one network.** With firmware **2.8.0+** just run `--push`:
+- **Several SmallTVs on one network.** With any `kittipitch/smalltv-mod` release
+  (its `v1.0.0-kitt*` versions are numerically *lower* than upstream's 2.8.x, but
+  newer) just run `--push`:
   each device advertises itself over mDNS (`_clawdmeter._tcp`) and the daemon
   discovers them all and pushes the same usage to every one, no per-device address.
   Devices that join or drop off are picked up on the next push. Needs `zeroconf`

@@ -2982,7 +2982,8 @@ def _static_push_urls(cfg: dict) -> list:
 
 
 # ---- mDNS discovery: find every SmallTV on the LAN ------------------------
-# smalltv-mod firmware (2.8.0+) advertises a `_clawdmeter._tcp` service whose TXT
+# smalltv-mod firmware (upstream 2.8.0+, and every kittipitch fork release)
+# advertises a `_clawdmeter._tcp` service whose TXT
 # record carries the push path. Browsing for it lets one daemon push to every
 # device with no hardcoded address, so several SmallTVs stay in sync without a
 # --push-to per device. zeroconf is optional: without it, push still works with
