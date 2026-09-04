@@ -1,101 +1,136 @@
 # Getting a token for each harness
 
-The daemon reads quota from several different tools, and **each one authenticates
-differently**. This page is the per-harness reference: where the credential comes
-from, where it is stored, and whether it can be copied to another machine.
+The daemon reads quota from several tools, and **each authenticates differently**.
+This is the per-harness reference: where the credential comes from, where it is
+stored, whether it survives being copied to another machine, and how to tell it
+worked.
 
-Read the copyability table first — it is the thing that wastes the most time.
+## Where the daemon looks for secrets
 
-## The rule that matters: what can be copied between machines
+Two separate mechanisms, easy to confuse:
 
-Setting up a second machine, the instinct is to copy credentials across. That
-works for **static** credentials and fails for **short-lived OAuth** ones, which
-refresh per-device and reject a copied refresh token.
+| Mechanism | Who reads it | Notes |
+|---|---|---|
+| **`.env` beside `clawdmeter_daemon.py`** (and `.env` in the working directory) | the daemon itself, at import | `KEY=VALUE` per line. Uses `setdefault`, so a **real environment variable always wins**. |
+| **`~/.config/clawdmeter/token.env`** | **systemd**, via `EnvironmentFile=` | The daemon never opens this path. It works only because systemd injects it into the process environment first. This is what the Raspberry Pi deployment uses. |
 
-| Credential | Copyable to another machine? |
+Either is fine. Use `.env` if you start the daemon directly or under launchd; use
+`EnvironmentFile=` if you run it under systemd. You do not need both.
+
+⚠ Under `systemd --user` the working directory defaults to `$HOME`, so a stray
+`~/.env` gets loaded too. Worth knowing if secrets appear from nowhere.
+
+### `.env` format traps
+
+The parser takes one `KEY=VALUE` per line, strips surrounding quotes, and
+**silently skips any line without `=`**. So:
+
+- no `export` prefix
+- **no line break inside the value** — Claude Code displays long tokens wrapped;
+  pasting the wrap produces a daemon with no token and *no error message*
+- then confirm with the log, not by eye
+
+## What can be copied between machines
+
+Static credentials copy fine. Short-lived OAuth ones refresh per-device and reject
+a copied refresh token.
+
+| Credential | Copyable? |
 |---|---|
-| `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) | **Yes** — long-lived, ~1 year |
-| `CLAWDMETER_ZAI_KEY` (z.ai API key) | **Yes** — static API key |
+| `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`) | **Yes** — long-lived |
+| `CLAWDMETER_ZAI_KEY` | **Yes** — static API key |
 | OpenRouter key | **Yes** — static API key |
-| Google **service-account** JSON | **Yes** — no expiry at all |
-| `~/.codex/auth.json` (Codex) | **No** — fails with `401 token expired` |
-| `~/.clawdmeter-google-token.json` (Calendar **OAuth**) | **No** — fails with `invalid_grant` |
-| `agy` / Antigravity session | **No** — sign in per machine |
+| Google **service-account** JSON | **Yes** — no expiry |
+| `~/.codex/auth.json` | **No** — `401 token expired` on the copy |
+| Calendar **OAuth** token | **Unreliable** — worked once, failed once with `invalid_grant` |
+| `agy` / Antigravity session | **Unverified** — sign in per machine |
 
-Both "No" cases were confirmed the hard way: a copied `~/.codex/auth.json` worked
-on the source machine and 401'd instantly on the target, and a copied Google OAuth
-token failed to refresh with `invalid_grant` while the source machine refreshed the
-identical file seconds later. **Fresh login on each machine is the only fix.**
+The Codex case is mechanically sound as well as observed: two machines sharing one
+refresh token produce `refresh_token_reused`.
 
 ---
 
 ## Claude usage
 
-The daemon looks for a token in this order:
+Lookup order in `read_token()`:
 
-1. **`CLAUDE_CODE_OAUTH_TOKEN` env var** — the robust choice for an always-on
-   daemon. Also loaded from a **`.env` file next to `clawdmeter_daemon.py`**
-   (`KEY=VALUE`, `#` comments allowed), which matters because service managers do
-   **not** read your shell profile (see [PATH and environment](#path-and-environment-the-silent-killer)).
-2. **macOS Keychain** (`Claude Code-credentials`) or **`~/.claude/.credentials.json`**
-   — whatever Claude Code itself wrote when you logged in.
+1. **`CLAUDE_CODE_OAUTH_TOKEN`** environment variable (including via `.env` /
+   `EnvironmentFile=`)
+2. Otherwise, whatever Claude Code itself stored **on this machine** — and this
+   differs by platform:
+   - **macOS**: the Keychain item `Claude Code-credentials`, only
+   - **Linux / Windows**: `~/.claude/.credentials.json`, only
 
-Get a long-lived token:
+**An environment token bypasses Claude Code's own login completely.** A headless box
+that has never run `claude` works fine with one — that is exactly how the Raspberry
+Pi deployment runs. Without a token, the daemon needs Claude Code logged in *on that
+machine*.
 
 ```bash
 claude setup-token          # subscription required; prints sk-ant-oat...
 ```
 
-Then store it where the daemon will actually see it:
-
 ```bash
-# next to the script — simplest, works under launchd/systemd
 umask 077
 printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' 'sk-ant-oat...' > /path/to/clawdmeter-daemon/.env
 chmod 600 /path/to/clawdmeter-daemon/.env
 ```
 
-**Prefer this over relying on the Keychain path.** The Keychain fallback works only
-while a GUI session is unlocked, and it has **no refresh path** — once that access
-token expires the daemon 401s silently until you next use Claude Code interactively.
+**Use the env token on any unattended machine.** The macOS Keychain branch has no
+refresh path of its own, and the Linux fallback may spawn `claude` to refresh, which
+has been seen to hang with stale credentials.
 
-> Signing in to Claude Code (`/login`) is not the same as having a token the daemon
-> can use. If `claude` says `Not logged in · Please run /login`, nothing else will
-> work either.
+⚠ **A missing token is silent in the log.** There is no "no token" line — the only
+symptoms are `{"ok":false}` pushes and the tray/console status. Check for a real
+`5h=..% 7d=..%` line instead.
 
 ## Codex
 
-Uses your existing Codex CLI login — no key to paste. The daemon briefly spawns
-`codex app-server` and reads the quota over RPC, which is **free**.
+Uses your existing Codex CLI login — nothing to paste. The daemon briefly spawns
+`codex app-server` and reads quota over RPC, which is **free**.
 
 ```bash
-codex login                 # normal browser flow
-codex login --device-auth   # headless / over SSH — Codex has a real device-code flow
+codex login                 # browser flow
+codex login --device-auth   # headless / over SSH — real device-code flow
 ```
 
-Stored in `~/.codex/auth.json`. **Do not copy that file to another machine** — see
-the table above.
+Three things that bite:
+
+- **It goes stale on a box that never runs `codex` interactively.** A Pi went six
+  days and then returned `401 token expired`. Fix is `codex login --device-auth`
+  again.
+- **Never run bare `codex login` "just to check" on a machine with a live session** —
+  it wipes the existing session before completing the new one.
+- Must be a **ChatGPT-plan login**, not `--with-api-key`; the API-key path reports no
+  rate limits.
+
+Stored in `~/.codex/auth.json`. Do not copy it to another machine.
 
 ## Antigravity (`agy`)
 
 ⚠ **Every poll costs real money.** Unlike Codex's free RPC read, `agy` only reports
-quota once a cascade session has actually run, so the daemon fires a small real
-prompt on each poll. That is why the default interval is 1800 s. Consider
-`--antigravity-interval 3600` or leaving the feature off.
+quota once a cascade session has run, so the daemon fires a small real prompt each
+poll. Default interval is 1800 s; consider `--antigravity-interval 3600`, or leave
+the feature off.
 
-Two traps:
+Traps, in the order people hit them:
 
-1. **The `agy` CLI is a separate install from the Antigravity IDE.** Having
-   `/Applications/Antigravity.app` does *not* give you `agy`, and the app bundles no
-   CLI (unlike VS Code's `code`).
-2. **Signing in to the IDE does not sign in the CLI.** They keep separate state.
+1. **The `agy` CLI is a separate install from the Antigravity IDE.** Having the app
+   does not give you `agy`, and the app bundles no CLI.
+2. **Signing in to the IDE does not sign in the CLI.** Separate state.
+3. **Sign-in needs a real TTY.** A plain `ssh host 'agy'` dies with
+   `bubbletea: could not open TTY`. Over SSH, use `tmux new-session 'agy'`.
+4. **Accept the "trust this folder" prompt**, or unattended polls fail. The daemon
+   spawns `agy` with the service's working directory — `$HOME` under
+   `systemd --user` — so trust `$HOME`.
+5. **`lsof` must be on PATH** — the daemon finds the spawned `agy`'s port with it.
 
 ```bash
-agy            # bare, no arguments — this is what triggers sign-in
-agy models     # free auth check: lists models if signed in
+agy            # bare, no arguments — this triggers sign-in
+agy models     # free auth check; also confirms the model id below exists
 ```
 
-CLI state lives in `~/.gemini/antigravity-cli/`. Not signed in looks like:
+State lives in `~/.gemini/antigravity-cli/`. Not signed in looks like:
 
 ```
 Error: Please sign in to view available models. Launch the CLI without arguments to sign in.
@@ -107,68 +142,84 @@ and in `~/.gemini/antigravity-cli/log/cli-*.log`:
 error getting token source: You are not logged into Antigravity.
 ```
 
+The prompt model is hardcoded to `gemini-3.6-flash-low`. It must appear in
+`agy models` for your plan, or every poll fails.
+
 ## z.ai
 
-A static API key from your z.ai account. Pass `--zai-key`, or set
-`CLAWDMETER_ZAI_KEY` in the env / `.env` file. Copyable between machines.
+Static API key. Pass `--zai-key`, or set `CLAWDMETER_ZAI_KEY` in the environment /
+`.env` / `EnvironmentFile=`. Copyable between machines.
 
 ## OpenRouter
 
-A static API key. Copyable between machines.
+Resolved in this order:
+
+1. `--openrouter-key`
+2. `CLAWDMETER_OPENROUTER_KEY`
+3. the file **`~/.openrouter_dot_ai_key`**
+
+The file is what the existing deployments actually use. Copyable between machines.
 
 ## Google Calendar
 
-Two paths. **Use the service account.**
+Two paths. **Prefer the service account.**
 
-### Service account (recommended — no expiry)
+### Service account (no expiry)
+
+Needs `google-auth` installed in the same environment as the daemon — it is in
+`requirements.txt`, but an existing venv may need `pip install google-auth`. Without
+it, the key is silently ignored.
 
 1. [Create a project](https://console.cloud.google.com/projectcreate)
 2. [Enable the Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
 3. [Service accounts](https://console.cloud.google.com/iam-admin/serviceaccounts) →
    **Create Service Account** (any name, **no roles needed**) → open it → **Keys** →
    **Add Key** → **Create new key** → **JSON**
-4. Save it as `~/.clawdmeter-google-service-account.json` (`chmod 600`), or point at
-   it with `GOOGLE_APPLICATION_CREDENTIALS` in the `.env` file
+4. Save as `~/.clawdmeter-google-service-account.json` (`chmod 600`), or point
+   `GOOGLE_APPLICATION_CREDENTIALS` at it. That variable can live in `.env` or in
+   systemd's `EnvironmentFile=`; `~` is expanded.
 5. **Share your calendar with the service account.** Copy `client_email` from the
-   JSON (`...@....iam.gserviceaccount.com`), then in
-   [Google Calendar](https://calendar.google.com) → calendar **Settings and
-   sharing** → **Share with specific people** → add that email with **"See all event
-   details"**. Skipping this is the single most common failure: everything looks
-   configured and no events ever appear.
-6. Run with an **explicit `--calendar-id`** (your Gmail address, for a primary
-   calendar). It is required with a service account — the auto-detect relies on
-   Google's "selected calendars" sidebar state, which a service account does not have.
+   JSON, then in [Google Calendar](https://calendar.google.com) → calendar
+   **Settings and sharing** → **Share with specific people** → add that email with
+   **"See all event details"**. Skipping this is the most common failure: everything
+   looks configured and no events ever appear.
+6. Give the calendar id — either `--calendar-id you@gmail.com`, **or** fill in
+   **Calendar ID(s)** in the device's own Agenda tab, which the daemon reads each
+   poll. One of the two is required; auto-detect relies on Google's "selected
+   calendars" state, which a service account does not have.
 
-The JSON key is a long-lived credential with **no expiry**. Treat it like a
-password.
+A downloaded `client_secret_*.apps.googleusercontent.com.json` is an **OAuth client
+secret**, not a service-account key. Wrong file.
 
-### OAuth (`--calendar-auth`) — has a 7-day cliff
+### OAuth (`--calendar-auth`)
 
-Works, but the refresh token expires after 7 days unless the GCP project is
-published to Production, and Google will not publish a project whose client uses a
-non-HTTPS redirect URI. Fine for a quick test, wrong for an always-on daemon.
+Works, but the refresh token expires after **7 days** while the GCP project is in
+Testing. Publishing it to Production removes that — which was impossible for one
+project here because an unrelated client in the same project used a non-HTTPS
+redirect URI. Use a fresh project, or the service account.
 
-Note that a downloaded `client_secret_*.apps.googleusercontent.com.json` is an
-**OAuth client secret**, not a service-account key. Different thing, wrong file.
+**Headless?** `--calendar-auth` binds a random loopback port and prints a URL. Over
+SSH, forward that port (`ssh -L <port>:127.0.0.1:<port> host`) and open the URL in a
+local browser. `--calendar-sync-color` needs this same OAuth login, so a
+service-account-only box cannot set calendar colours.
 
 ---
 
-## PATH and environment: the silent killer
+## PATH and environment: the quiet failure
 
-Service managers start with a **minimal environment**. They do **not** read
-`~/.zshrc`, `~/.zprofile`, or `~/.bashrc`. Two consequences, both of which fail
-quietly:
+Service managers start with a **minimal environment** and do **not** read
+`~/.zshrc`, `~/.zprofile` or `~/.bashrc`. Two consequences:
 
-- **Secrets exported in a shell profile are invisible to the daemon.** Use the
-  `.env` file next to the script (or `EnvironmentFile=` on systemd).
-- **Tools installed in `~/.local/bin`, `~/.npm-global/bin` or `/opt/homebrew/bin`
-  are not on `PATH`.** The daemon shells out to `claude`, `codex` and `agy`, so a
-  missing PATH means **Codex silently reports no rate limits** rather than erroring.
+- **Secrets exported in a shell profile are invisible to the daemon.** Use `.env` or
+  `EnvironmentFile=`.
+- **Tools in `~/.local/bin`, `~/.npm-global/bin` or `/opt/homebrew/bin` are not on
+  `PATH`.** The daemon shells out to `claude`, `codex` and `agy`.
 
-Fix per platform:
+This applies to **launchd as well as systemd** — launchd's default PATH is
+`/usr/bin:/bin:/usr/sbin:/sbin`, with no Homebrew.
 
 ```ini
-# systemd (Linux):  ~/.config/systemd/user/clawdmeter.service
+# systemd (Linux): ~/.config/systemd/user/clawdmeter.service
 [Service]
 Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=%h/.config/clawdmeter/token.env
@@ -182,18 +233,36 @@ EnvironmentFile=%h/.config/clawdmeter/token.env
 </dict>
 ```
 
-Do **not** put the token itself in the plist's `EnvironmentVariables` — it leaks to
-anyone who runs `launchctl print`. Use the `.env` file. `launchctl setenv` is also
-wrong: it does not survive a reboot.
+Symlinking the tools into `/usr/local/bin` works too, and is what one deployment does
+for `agy`.
 
-## Quick verification
+⚠ Re-running `--install` **rewrites the plist** and drops any PATH block you added by
+hand.
 
-```bash
-# what the daemon actually sees
-python3 -c "import os;print('token set:', bool(os.environ.get('CLAUDE_CODE_OAUTH_TOKEN')))"
-codex login status 2>/dev/null || echo 'codex: not logged in'
-agy models        # free; lists models if signed in
+Do **not** put the token in the plist's `EnvironmentVariables` — it leaks to anyone
+running `launchctl print`. `launchctl setenv` is also wrong: it does not survive a
+reboot.
+
+When a tool is missing, the log says so explicitly:
+
+```
+Codex: `codex` not found on PATH - check this daemon's actual runtime PATH
 ```
 
-Then watch the log for real numbers — `5h=..% 7d=..%` for Claude, `Codex: {...}`
-for Codex — and for `Pushing to http://<device>/api/usage OK`.
+## Verifying
+
+Checking your interactive shell proves nothing — it has neither the `.env` contents
+nor `EnvironmentFile=`. Ask the service manager, then read the log:
+
+```bash
+# systemd
+systemctl --user show clawdmeter -p Environment
+journalctl --user -u clawdmeter -n 50
+
+# launchd
+launchctl print gui/$(id -u)/<label> | grep -A5 environment
+tail -50 ~/Library/Logs/clawdmeter.out.log
+```
+
+Success looks like real numbers, not absence of errors: `5h=..% 7d=..%` for Claude,
+`Codex: {...}` for Codex, and `Pushing to http://<device>/api/usage OK`.

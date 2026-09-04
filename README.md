@@ -98,11 +98,24 @@ headlessly. So for a set-and-forget daemon:
 
 ```sh
 claude setup-token        # subscription required; prints a token (sk-ant-oat…)
-# Windows:  setx CLAUDE_CODE_OAUTH_TOKEN "sk-ant-oat...your-token..."
-# macOS/Linux:  export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat..."  in your shell profile
 ```
 
-Then restart the daemon from a **new** shell so it inherits the variable.
+Then put it where the daemon will actually see it. **A shell profile is not such a
+place** — service managers (systemd, launchd) never read `~/.zshrc`, `~/.bashrc` or
+`~/.zprofile`, so a token exported there works in your terminal and is invisible to
+the running daemon:
+
+```sh
+# .env beside clawdmeter_daemon.py — read by the daemon itself
+umask 077
+printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' 'sk-ant-oat...' > .env
+
+# or, under systemd: ~/.config/clawdmeter/token.env + EnvironmentFile=
+```
+
+One `KEY=VALUE` per line, no `export`, and **no line break inside the token** — a
+wrapped paste is silently ignored. See **[AUTHENTICATION.md](AUTHENTICATION.md)**
+for the per-harness details.
 
 ## Tray icon + autostart (Windows, macOS, Linux)
 
@@ -220,8 +233,15 @@ Three things a headless box needs that a desktop session gets for free:
   Environment=PATH=/home/YOU/.local/bin:/home/YOU/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   ```
 
-  (macOS LaunchAgents and Windows autostart don't have this problem — this
-  is Linux-specific to systemd.)
+  **macOS LaunchAgents have the same problem** — launchd's default PATH is
+  `/usr/bin:/bin:/usr/sbin:/sbin`, with no Homebrew and no `~/.local/bin`, so
+  `codex`/`agy`/`claude` are invisible there too. Add an `EnvironmentVariables`
+  dict with a `PATH` string to the plist (note that re-running `--install`
+  rewrites the plist and drops it). Symlinking the tools into `/usr/local/bin`
+  is an equally good fix on both platforms.
+
+  The failure is not actually silent — the log says
+  `` `codex` not found on PATH - check this daemon's actual runtime PATH ``.
 
 Useful commands:
 
@@ -395,9 +415,12 @@ a "Desktop app" OAuth client, save its `client_id`/`client_secret` to
 your browser for one-time consent, then saves a **refresh token** to
 `~/.clawdmeter-google-token.json`. After that, no more browser needed —
 polling refreshes its access token silently, same as `claude setup-token`
-being a one-time thing on the Claude side. If the daemon runs elsewhere (e.g.
-a headless Pi), copy that one file there (`scp ~/.clawdmeter-google-token.json
-<host>:~/`).
+being a one-time thing on the Claude side. If the daemon runs elsewhere (e.g. a headless
+Pi), copying that one file there has worked once and failed once with
+`invalid_grant` — even while the source machine kept refreshing the same file
+successfully. Treat it as unreliable and prefer the service account, or run
+`--calendar-auth` on the target machine by forwarding its loopback port over SSH
+(`ssh -L <port>:127.0.0.1:<port> host`) and opening the printed URL locally.
 
 > Keep the OAuth consent screen in "Testing" and Google expires your refresh
 > token after 7 days — you'd have to re-run `--calendar-auth` weekly. Publish
@@ -638,11 +661,12 @@ session). Answer both before it drops you into a normal prompt; then
 exit (`Ctrl+C` twice) — no need to leave the session running, the daemon
 starts its own `agy` process per poll.
 
-Once authenticated once with a browser, the token file can be copied to
-another headless box the same way as Calendar/Codex's credential files
-(`scp ~/.gemini/antigravity/antigravity-oauth-token
-<host>:~/.gemini/antigravity/antigravity-oauth-token`) — not independently
-verified working on a second machine.
+**Sign in on each machine.** Copying the session to another box is unverified,
+and the path this README previously gave for it does not exist on a signed-in
+machine — the CLI keeps its state under `~/.gemini/antigravity-cli/`, which is
+separate from the IDE's directory. Note also that signing in to the Antigravity
+IDE does **not** sign in the CLI, and that sign-in needs a real TTY (over SSH,
+run it inside `tmux new-session 'agy'`).
 
 ```json
 { "ok": true, "pctPro": 4, "labelPro": "3.1 Pro", "rPro": 9180, "pctFlash": 2, "labelFlash": "3.6 Flash", "rFlash": 284 }
