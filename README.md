@@ -653,7 +653,7 @@ and paste the code it shows you back into that same `agy` prompt (**do
 this by typing directly into the terminal, never by pasting the code
 into a chat client or anywhere else it'd be logged** — it's a real,
 time-limited OAuth code). The token lands at
-`~/.gemini/antigravity/antigravity-oauth-token`. First run also asks two
+`~/.gemini/antigravity-cli/antigravity-oauth-token`. First run also asks two
 one-time questions: whether to share CLI usage data with Google (opt-out
 is a real, separate checkbox — toggle with `enter`, not `space`, on the
 entry it's pre-checked on) and whether to trust the current

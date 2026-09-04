@@ -121,30 +121,35 @@ Traps, in the order people hit them:
 3. **Sign-in needs a real TTY.** A plain `ssh host 'agy'` dies with
    `bubbletea: could not open TTY`. Over SSH, use `tmux new-session 'agy'`.
 4. **The daemon's working directory must be trusted by `agy`.** This is the one
-   that looks exactly like an auth failure and is not. `agy` spawns a cascade
-   session in whatever directory it is launched from, and refuses in an untrusted
-   one — returning an empty result with no distinct error, so the daemon just logs
-   `{"ok": False}`.
+   that looks exactly like an auth failure. `agy` runs its cascade session in
+   whatever directory it is launched from and refuses in an untrusted one,
+   reporting the same `not logged into Antigravity` error text as a real sign-in
+   problem.
 
-   The directory to trust is the **service's working directory**, not your shell's:
-   `WorkingDirectory` in a launchd plist, or `$HOME` by default under
-   `systemd --user`. Check and fix:
+   The directory is the **service's** working directory, not your shell's:
+   `WorkingDirectory` in a launchd plist, `$HOME` by default under
+   `systemd --user`, and **`/`** for a plist written by `--install` (it sets no
+   `WorkingDirectory` at all — see the warning at the end of this file).
+
+   **What was actually proven to fix it** — do this in a GUI terminal on the
+   machine:
 
    ```bash
-   cat ~/.gemini/antigravity-cli/settings.json     # look at trustedWorkspaces
+   cd <the service's WorkingDirectory>
+   agy                      # bare; accept the "trust this folder" prompt
    ```
 
-   ```json
-   {
-     "trustedWorkspaces": [
-       "/Users/you",
-       "/Users/you/git_projects/clawdmeter-daemon"
-     ]
-   }
+   Then restart the service. Editing `trustedWorkspaces` in
+   `~/.gemini/antigravity-cli/settings.json` by hand *looks* equivalent and is the
+   obvious thing to try, but on its own it did **not** unblock the poll in the one
+   traced case — the interactive trust prompt did. Treat the hand-edit as
+   unverified.
+
+   ```bash
+   cat ~/.gemini/antigravity-cli/settings.json     # inspect trustedWorkspaces
    ```
 
-   Trusting only `$HOME` is **not** enough if the service runs from a repo
-   directory. Restart the service after editing.
+   Trusting only `$HOME` is not enough when the service runs from a repo checkout.
 5. **`lsof` must be on PATH** — the daemon finds the spawned `agy`'s port with it.
 
 ```bash
@@ -164,21 +169,33 @@ and in `~/.gemini/antigravity-cli/log/cli-*.log`:
 error getting token source: You are not logged into Antigravity.
 ```
 
-⚠ **That message lies when run headlessly.** With no Aqua session — over SSH, or
-under launchd — `agy`'s own Keychain read times out after 10 s and it reports "not
-logged into Antigravity" **even though the account is authenticated**. So a bare
-`ssh host 'agy models'` is not a valid auth check and will send you chasing a
-sign-in you already did.
+⚠ **Do not trust this message at face value.** It is reported for at least two
+different underlying causes, only one of which is an actual sign-in problem:
 
-What actually happens: a background goroutine in that same process still completes
-an OAuth refresh over the network, and because its Keychain *write* also times out,
-it falls back to a plaintext token file at
-`~/.gemini/antigravity-cli/antigravity-oauth-token`. A second invocation, started
-after the first has fully exited, picks that healed file up. The daemon retries once
-on exactly this error for that reason.
+- **An untrusted working directory** produces this exact `errorMessage`. In the one
+  setup where this was traced through the logs, that was the real blocker — the
+  account was signed in and the keyring was being read successfully on 33 of 34
+  runs.
+- **A genuine keyring timeout**, which is rarer than previously written here (once
+  in 39 runs). Its symptom is *different*: the daemon logs `agy prompt still
+  running after 60s, killing` and `agy stderr: Authentication required. Please
+  visit the URL to log in`. When the keyring write also times out, `agy` falls back
+  to a plaintext token file at `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 
-To check auth for real, run `agy models` **in a GUI terminal on the machine
-itself**, or look for that token file.
+The daemon's own `keyring read timed out headlessly (transient) - retrying once`
+line is a **heuristic, and is frequently misattributed** — it fires on the error
+text, not on evidence of a timeout. Treat "retrying once… then a failure" as
+**probably an untrusted working directory**, not a keyring problem.
+
+Settle it from `agy`'s own logs rather than guessing:
+
+```bash
+grep -l 'timed out' ~/.gemini/antigravity-cli/log/cli-*.log        # keyring actually timed out?
+grep -h 'authenticated via keyring\|effective: file' ~/.gemini/antigravity-cli/log/cli-*.log | tail -3
+```
+
+Note the token file is **not** a reliable sign of anything: it exists only when a
+keyring save fell back, so it can be absent on a perfectly healthy signed-in Mac.
 
 ### If Antigravity returns `{"ok": False}` and nothing else
 
@@ -202,8 +219,10 @@ Note the retry path currently swallows the second attempt's error text, so a
 persistent failure logs only the "retrying once" line and then nothing. If you are
 debugging this, expect no further clue from the log.
 
-The prompt model is hardcoded to `gemini-3.6-flash-low`. It must appear in
-`agy models` for your plan, or every poll fails.
+The prompt model is hardcoded to `gemini-3.6-flash-low`. A missing id is **not** a
+failure cause — observed behaviour is `Model ID gemini-3.6-flash-low not in local
+config, defaulting to CCPA`, after which the poll still succeeds. Do not chase this
+as a suspect; the cost of that default is simply unknown.
 
 ## z.ai
 
@@ -228,7 +247,8 @@ Two paths. **Prefer the service account.**
 
 Needs `google-auth` installed in the same environment as the daemon — it is in
 `requirements.txt`, but an existing venv may need `pip install google-auth`. Without
-it, the key is silently ignored.
+it the daemon logs `Calendar: google-auth not installed - `pip install
+google-auth`` and simply polls nothing.
 
 1. [Create a project](https://console.cloud.google.com/projectcreate)
 2. [Enable the Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
@@ -252,6 +272,25 @@ it, the key is silently ignored.
 A downloaded `client_secret_*.apps.googleusercontent.com.json` is an **OAuth client
 secret**, not a service-account key. Wrong file.
 
+#### Calendar ids live in TWO places, and the device wins
+
+The daemon merges `--calendar-id` (persisted to `~/.clawdmeter-daemon.json`) with
+the **Calendar ID(s) field in the device's own Agenda tab**, which it re-reads every
+poll. The device's value takes precedence, so a stale id set there **survives every
+daemon-side fix** — clear it in both places, then restart.
+
+**Never list `addressbook#contacts@group.v.calendar.google.com` (Birthdays) with a
+service account.** It is auto-included only in OAuth auto-detect mode; given
+explicitly, the daemon tries to add it to the service account's calendarList and
+Google rejects it, logging on **every poll**:
+
+```
+Calendar list insert HTTP 400 (addressbook#contacts@group.v.calendar.google.com)
+```
+
+There is no failure memo, so it repeats forever. Calendar still works — the noise is
+the only symptom.
+
 ### OAuth (`--calendar-auth`)
 
 Works, but the refresh token expires after **7 days** while the GCP project is in
@@ -274,7 +313,9 @@ Service managers start with a **minimal environment** and do **not** read
 - **Secrets exported in a shell profile are invisible to the daemon.** Use `.env` or
   `EnvironmentFile=`.
 - **Tools in `~/.local/bin`, `~/.npm-global/bin` or `/opt/homebrew/bin` are not on
-  `PATH`.** The daemon shells out to `claude`, `codex` and `agy`.
+  `PATH`.** The daemon shells out to `claude`, `codex`, `agy`, `lsof` (Antigravity port
+  discovery, at **`/usr/sbin/lsof`** on macOS) and `trans` (calendar title
+  translation).
 
 This applies to **launchd as well as systemd** — launchd's default PATH is
 `/usr/bin:/bin:/usr/sbin:/sbin`, with no Homebrew.
@@ -282,7 +323,7 @@ This applies to **launchd as well as systemd** — launchd's default PATH is
 ```ini
 # systemd (Linux): ~/.config/systemd/user/clawdmeter.service
 [Service]
-Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 EnvironmentFile=%h/.config/clawdmeter/token.env
 ```
 
@@ -290,18 +331,25 @@ EnvironmentFile=%h/.config/clawdmeter/token.env
 <!-- launchd (macOS): ~/Library/LaunchAgents/<label>.plist -->
 <key>EnvironmentVariables</key>
 <dict>
-    <key>PATH</key><string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>/Users/YOU/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 </dict>
 ```
 
 Symlinking the tools into `/usr/local/bin` works too, and is what one deployment does
 for `agy`.
 
-⚠ Re-running `--install` **rewrites the plist** and drops any PATH block you added by
-hand.
+⚠ **The plist `--install` writes cannot work for Antigravity, and re-running it
+overwrites a hand-built one.** It sets no `WorkingDirectory` (so the daemon runs
+from **`/`**, which `agy` will not trust, and a `cwd`-relative `.env` resolves to
+`/.env`), no `EnvironmentVariables` (so no PATH — no `codex`, `agy`, `lsof` or
+`trans`), no `KeepAlive`, and passes only `--tray`. For anything beyond Claude
+usage, write the plist by hand: `--no-tray`, explicit flags, `WorkingDirectory`,
+an `EnvironmentVariables` PATH, and `KeepAlive` with `SuccessfulExit=false`.
 
 Do **not** put the token in the plist's `EnvironmentVariables` — it leaks to anyone
-running `launchctl print`. `launchctl setenv` is also wrong: it does not survive a
+running `launchctl print`. The same applies to `--zai-key` / `--openrouter-key` in
+`ProgramArguments` or `ExecStart`, which are visible in `ps`; prefer `.env` or
+`EnvironmentFile=`. `launchctl setenv` is also wrong: it does not survive a
 reboot.
 
 When a tool is missing, the log says so explicitly:
