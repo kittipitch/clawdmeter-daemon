@@ -25,6 +25,8 @@ Firmware that speaks the contract:
 
 Payload contract: {"s":29,"sr":142,"w":4,"wr":9876,"st":"allowed","ok":true}
   s/w  = 5h / 7d utilization %     sr/wr = minutes until each window resets
+         w/wr are ABSENT when the account has no weekly window (org-managed);
+         absent means 'no such window', never zero -- the device shows N/A.
   st   = rate-limit status         ok    = false => no data (e.g. not logged in)
 """
 
@@ -346,7 +348,7 @@ class State:
             lines = [f"clawdmeter — {self.status}"]
             p = self.payload
             if p.get("ok"):
-                lines.append(f"5h {p['s']}%   7d {p['w']}%")
+                lines.append(f"5h {p['s']}%   7d {p.get('w', 'N/A')}%")
             if self.port:
                 lines.append("serial " + self.port)
             if self.push_target:
@@ -368,7 +370,7 @@ class State:
             parts = [f"clawdmeter — {self.status}"]
             p = self.payload
             if p.get("ok"):
-                parts.append(f"5h {p['s']}%  7d {p['w']}%")
+                parts.append(f"5h {p['s']}%  7d {p.get('w', 'N/A')}%")
             if self.port:
                 parts.append("serial " + self.port)
             if self.push_target:
@@ -661,11 +663,22 @@ def poll_api(token: str) -> tuple[dict | None, bool]:
     payload = {
         "s":  pct(hdr("anthropic-ratelimit-unified-5h-utilization")),
         "sr": reset_minutes(hdr("anthropic-ratelimit-unified-5h-reset")),
-        "w":  pct(hdr("anthropic-ratelimit-unified-7d-utilization")),
-        "wr": reset_minutes(hdr("anthropic-ratelimit-unified-7d-reset")),
         "st": hdr("anthropic-ratelimit-unified-5h-status", "unknown"),
         "ok": True,
     }
+
+    # The 7d keys are omitted ENTIRELY when the API sends no weekly headers --
+    # org-managed accounts get anthropic-ratelimit-unified-5h-* but no -7d-*
+    # (confirmed live 2026-09-06 on a managed account: 5h utilization/reset/status
+    # and overage-disabled-reason=org_level_disabled present, every 7d header
+    # absent). Defaulting them to "0" via hdr() -- which is what this used to do
+    # -- fabricated a "7d 0%, resets now" card that never moved, because
+    # reset_minutes("0") is a 1970 epoch and clamps to 0, which the device draws
+    # as "now". Absent is not zero: send nothing and let the device show N/A.
+    w_util = resp.headers.get("anthropic-ratelimit-unified-7d-utilization")
+    if w_util is not None and w_util.strip():
+        payload["w"]  = pct(w_util)
+        payload["wr"] = reset_minutes(hdr("anthropic-ratelimit-unified-7d-reset"))
     return payload, False
 
 
@@ -688,7 +701,9 @@ def do_poll() -> None:
     if payload is not None:
         state.set_payload(payload)
         state.set_status("Connected")
-        log(f"5h={payload['s']}% 7d={payload['w']}% st={payload['st']}")
+        log(f"5h={payload['s']}% sr={payload['sr']} "
+            f"7d={payload.get('w', 'N/A')}% wr={payload.get('wr', 'N/A')} "
+            f"st={payload['st']}")
     elif "token" not in state.status.lower():
         state.set_status("API error - retrying")
 
