@@ -2179,7 +2179,9 @@ def album_frame(path: Path) -> bytes | None:
         st = path.stat()
     except OSError:
         return None
-    key = hashlib.sha1(f"{path}|{st.st_mtime_ns}|{st.st_size}".encode()).hexdigest()
+    # "lb1" version prefix: bump when the conversion changes so old cached
+    # frames (e.g. centre-cropped) are not served for the same unchanged file.
+    key = hashlib.sha1(f"lb1|{path}|{st.st_mtime_ns}|{st.st_size}".encode()).hexdigest()
     hit = ALBUM_CACHE_DIR / f"{key}.565"
     try:
         if hit.is_file() and hit.stat().st_size == ALBUM_BYTES:
@@ -2194,10 +2196,14 @@ def album_frame(path: Path) -> bytes | None:
         return None
     try:
         with Image.open(path) as im:
-            # fit() centre-crops to the panel's aspect instead of squashing it.
+            # Letterbox: scale the WHOLE picture down to fit inside the panel and
+            # pad the leftover rows/columns with black -- nothing gets cropped
+            # away (centre-crop used to cut the edges off portrait photos).
             im = ImageOps.exif_transpose(im).convert("RGB")
-            im = ImageOps.fit(im, (ALBUM_W, ALBUM_H), Image.LANCZOS)
-            rgb = im.tobytes()
+            im.thumbnail((ALBUM_W, ALBUM_H), Image.LANCZOS)
+            frame = Image.new("RGB", (ALBUM_W, ALBUM_H), (0, 0, 0))
+            frame.paste(im, ((ALBUM_W - im.width) // 2, (ALBUM_H - im.height) // 2))
+            rgb = frame.tobytes()
     except Exception as e:                      # unreadable/corrupt picture
         log(f"Album: skipping {path.name}: {e}")
         return None
