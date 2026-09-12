@@ -169,8 +169,10 @@ long as you launch the daemon with that same interpreter.
 `google-auth` is needed for `--calendar`; `pyserial` is only needed for `--serial`, `pystray`
 only for the tray icon, `Pillow` for the tray icon **and** the `--album` Pictures page —
 Pillow **is** the converter for Pictures (it decodes jpg/jpeg/png/bmp/gif/webp,
-centre-crop-resizes to the panel, converts to the device's raw frame format and caches
-the result on disk), so no ImageMagick/ffmpeg or other CLI converter is needed; and
+letterbox-scales each picture — the **whole** photo fits on screen, black bars
+pad the rest, nothing is cropped away — converts it to the device's raw frame
+format and caches the result on disk), so no ImageMagick/ffmpeg or other CLI
+converter is needed; and
 `zeroconf` is only for mDNS auto-discovery on
 `--push` (without it, push still works via explicit `--push-to` hosts). On
 **macOS** the tray also needs `pyobjc-framework-Cocoa` (auto-installed by the
@@ -936,6 +938,39 @@ true, uncapped percentage.
 python clawdmeter_daemon.py --antigravity --push-to <device>
 ```
 
+## Pictures (`--album`) — a photo-frame page
+
+Turns the device into a small digital photo frame: the daemon feeds it your own
+pictures, one per rotation, full-screen.
+
+**Where the images go: any folder on the machine that runs the daemon.** Pass it
+with `--album /path/to/pictures` (a plain `--album` alone uses
+`~/Pictures/claudedaemon`). The folder is scanned **recursively**, so subfolders
+are fine — organise by album/date however you like.
+
+- Formats: `jpg` `jpeg` `png` `bmp` `gif` `webp`.
+- Order: by filename, or `--album-shuffle` for random.
+- Drop pictures in or remove them any time — the folder is rescanned every
+  rotation, **no restart needed**.
+- The daemon letterboxes: the **whole** picture is scaled down to fit the
+  240×240 panel and the leftover space is padded black, so portrait photos keep
+  their edges (no centre-cropping). Each finished frame is cached on disk, so
+  an unchanged folder converts nothing on later passes.
+- Timing follows the device's rotation interval (web UI, Display tab): in
+  **Pictures** mode it is how long each photo stays on screen ("Each picture
+  shows for (s)"); in **Carousel** mode the Pictures page gets that same dwell
+  once per loop among the other pages. The daemon sleeps exactly as long as the
+  device tells it to, and checks back every 5 minutes when the page is not in
+  the rotation at all.
+- Device side: tick **Pictures** in the web UI's **Display → Carousel** list,
+  or set **Mode → Pictures** to show photos only. Requires the modded firmware
+  (smalltv-mod) — stock firmware has no Pictures page.
+- Disable: `--no-album` (overrides a remembered `--album`; flags are sticky in
+  `~/.clawdmeter-daemon.json`).
+
+See the [smalltv-mod docs, Pictures page](https://kittipitch.github.io/smalltv-mod/features/pictures/)
+for the full device-side story.
+
 ## Options
 
 ```
@@ -1020,6 +1055,12 @@ python clawdmeter_daemon.py --antigravity --push-to <device>
 --no-antigravity    disable the Antigravity feature (overrides a remembered --antigravity)
 --antigravity-interval N  seconds between Antigravity quota refreshes
                     (default 1800 -- kept long since each poll has a real cost)
+--album [DIR]       feed the Pictures page from a folder of images. Bare
+                    `--album` uses ~/Pictures/claudedaemon. Scanned
+                    recursively; jpg/jpeg/png/bmp/gif/webp; rescan on every
+                    rotation, no restart needed when the folder changes
+--album-shuffle     pick pictures at random instead of in filename order
+--no-album          disable the album feature (overrides a remembered --album)
 ```
 
 ### Daemon source IP (optional, device-side)
