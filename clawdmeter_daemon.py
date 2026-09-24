@@ -617,6 +617,49 @@ def read_token() -> str | None:
 
 # ---- API polling ----------------------------------------------------------
 
+_reset_credits_unparseable_logged = False
+
+
+def _parse_reset_credits(value: str | None, now: datetime) -> dict:
+    """Return manually transcribed Claude reset-credit display fields."""
+    if value is None or not (spec := value.strip()):
+        return {}
+    count_text, separator, expiry_text = spec.partition("@")
+    try:
+        count = int(count_text)
+        if count <= 0:
+            return {}
+        if not separator:
+            return {"resetCredits": count}
+        # Promo emails say "before <date>"; display only renders whole days, so
+        # compare local calendar midnights rather than invent invisible sub-day
+        # precision from email transcription time.
+        if "@" in expiry_text:
+            return {}
+        expiry = datetime.strptime(expiry_text, "%Y-%m-%d")
+        now = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        mins = int(round((expiry - now).total_seconds() / 60))
+    except (TypeError, ValueError):
+        return {}
+    return {"resetCredits": count, "resetCreditExpireMins": mins} if mins > 0 else {}
+
+
+def _reset_credits_unparseable(value: str | None) -> bool:
+    """Whether a nonempty manual credit value violates its documented grammar."""
+    if value is None or not (spec := value.strip()):
+        return False
+    count_text, separator, expiry_text = spec.partition("@")
+    try:
+        int(count_text)
+        if separator:
+            if "@" in expiry_text:
+                return True
+            datetime.strptime(expiry_text, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
 def poll_api(token: str) -> tuple[dict | None, bool]:
     """Minimal API call; extract usage headers. Returns (payload, auth_failed)."""
     headers = dict(API_HEADERS_TEMPLATE)
@@ -686,6 +729,12 @@ def poll_api(token: str) -> tuple[dict | None, bool]:
 
 def do_poll() -> None:
     """One poll cycle: token -> API -> update shared state."""
+    global _reset_credits_unparseable_logged
+    manual_credits = os.environ.get("CLAUDE_RESET_CREDITS")
+    if (not _reset_credits_unparseable_logged
+            and _reset_credits_unparseable(manual_credits)):
+        log(f"CLAUDE_RESET_CREDITS unparseable: {manual_credits}")
+        _reset_credits_unparseable_logged = True
     token = read_token()
     if not token:
         state.set_status(_auth_hint or "No token - run 'claude setup-token'")
@@ -701,11 +750,20 @@ def do_poll() -> None:
             if new_token:
                 payload, _ = poll_api(new_token)
     if payload is not None:
+        reset_credits = _parse_reset_credits(manual_credits, datetime.now())
+        if reset_credits:
+            payload.update(reset_credits)
         state.set_payload(payload)
         state.set_status("Connected")
+        manual_log = ""
+        if "resetCredits" in payload:
+            manual_log = f" rc={payload['resetCredits']}(manual)"
+            if "resetCreditExpireMins" in payload:
+                manual_log = (f" rc={payload['resetCredits']} "
+                              f"rce={payload['resetCreditExpireMins']}(manual)")
         log(f"5h={payload['s']}% sr={payload['sr']} "
             f"7d={payload.get('w', 'N/A')}% wr={payload.get('wr', 'N/A')} "
-            f"st={payload['st']}")
+            f"st={payload['st']}{manual_log}")
     elif "token" not in state.status.lower():
         state.set_status("API error - retrying")
 
