@@ -1860,7 +1860,7 @@ def poll_weather(lat: float, lon: float) -> dict:
     try:
         r = httpx.get(OPEN_METEO_FORECAST_URL, params={
             "latitude": lat, "longitude": lon,
-            "current": "temperature_2m,precipitation_probability,weather_code,uv_index",
+            "current": "temperature_2m,precipitation_probability,weather_code,uv_index,is_day",
             # 3-day forecast, added to this same request (separate response
             # key "daily", doesn't touch the "current" parsing above at
             # all). timezone=auto so "daily" buckets are local calendar
@@ -1877,6 +1877,14 @@ def poll_weather(lat: float, lon: float) -> dict:
         if "precipitation_probability" in cur: payload["precipPct"] = cur["precipitation_probability"]
         if "weather_code" in cur: payload["weatherCode"] = cur["weather_code"]
         if "uv_index" in cur: payload["uvIndex"] = cur["uv_index"]
+        # is_day (1/0) rides the same `current` block -- no extra request. The
+        # device uses it for one thing: drawing a crescent moon instead of the
+        # sun on a clear night. Open-Meteo computes it for the location, which
+        # is why it is fetched rather than derived from the daemon host's clock:
+        # the host can be in a different timezone from the device's lat/lon, and
+        # a fixed "after 18:00" rule would be wrong for most of the year anyway.
+        # Shipped as an int so the device's filter can accept 1/0 directly.
+        if "is_day" in cur: payload["isDay"] = int(cur["is_day"])
 
         # daily["time"][0] is today (same local day as `current`, confirmed
         # live with forecast_days=4 + timezone=auto) -- start at index 1 so
