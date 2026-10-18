@@ -2625,6 +2625,14 @@ def poll_codex() -> dict:
         rWeek = window_reset_minutes(long_entry)
         if rWeek is not None:
             payload["rWeek"] = rWeek
+        # The "Week" slot is really "the long window". Free accounts get ONE window
+        # of 43200 min (30 days), which this slot used to show labelled "7d". Send
+        # its true length so the device can label it; Plus/Pro send 10080, which
+        # the device still draws as "7d", and a firmware that predates this key
+        # drops it unread (codexFilter), so nothing downstream changes for them.
+        wmins = window_minutes(long_entry)
+        if wmins:
+            payload["weekMins"] = int(wmins)
 
     # Free rate-limit reset credits -- separate from the primary/secondary
     # windows above, found in `rateLimitResetCredits`. Only count credits
@@ -2808,6 +2816,82 @@ def _antigravity_wait_for_status(pid: int, port_deadline: float,
     return last_status
 
 
+# ---- Antigravity quota via `agy -p "/quota"` (agy >= 1.4) ------------------------
+# The command prints one bucket per window per model group, e.g. group "Gemini
+# Models" with a "5h" and a "weekly" bucket, each {remaining_fraction, reset_time}.
+# The device wants two cards, so the group's shortest window goes in the top card
+# and its longest in the bottom one -- the same 5h-over-7d layout as the Claude page.
+# The wire keys keep their historical names (pctPro/labelPro = TOP card, pctFlash/
+# labelFlash = BOTTOM card) because deployed firmware reads exactly those.
+_AGY_WINDOW_MINUTES = {"5h": 300, "daily": 1440, "weekly": 10080, "monthly": 43200}
+
+
+def _agy_window_minutes(bucket: dict):
+    w = str(bucket.get("window") or "").strip().lower()
+    if w in _AGY_WINDOW_MINUTES:
+        return _AGY_WINDOW_MINUTES[w]
+    m = re.fullmatch(r"(\d+)\s*([hd])", w)  # "5h", "3d": a window name we have not seen yet
+    return int(m.group(1)) * (60 if m.group(2) == "h" else 1440) if m else None
+
+
+def _agy_window_label(mins: int) -> str:
+    return f"{mins // 60}h" if mins < 1440 else f"{round(mins / 1440)}d"
+
+
+def parse_agy_quota(doc, now: float | None = None) -> dict:
+    """Pure parser for the JSON `agy -p "/quota" --output-format json` prints.
+    Returns the device payload, or {"ok": False} when no usable bucket exists."""
+    now = time.time() if now is None else now
+    groups = (((doc or {}).get("command") or {}).get("data") or {}).get("groups") or []
+    best = None  # (is_gemini, bucket_count, -index) -> the group the device shows
+    for i, g in enumerate(groups):
+        if not isinstance(g, dict):
+            continue
+        buckets = []
+        for b in g.get("buckets") or []:
+            frac = b.get("remaining_fraction") if isinstance(b, dict) else None
+            mins = _agy_window_minutes(b) if isinstance(b, dict) else None
+            # a disabled bucket carries no fraction; unknown windows cannot be labelled
+            if isinstance(frac, (int, float)) and mins:
+                buckets.append((mins, b, frac))
+        if not buckets:
+            continue
+        key = ("gemini" in str(g.get("name", "")).lower(), len(buckets), -i)
+        if best is None or key > best[0]:
+            best = (key, sorted(buckets, key=lambda t: t[0]))
+    if best is None:
+        return {"ok": False}
+    chosen = best[1]
+    picks = [chosen[0]] if len(chosen) == 1 else [chosen[0], chosen[-1]]
+    payload: dict = {"ok": True}
+    for (mins, b, frac), suffix in zip(picks, ("Pro", "Flash")):
+        payload[f"pct{suffix}"] = int(round(max(0, min(100, (1 - frac) * 100))))
+        payload[f"label{suffix}"] = _agy_window_label(mins)
+        try:
+            reset = datetime.fromisoformat(str(b.get("reset_time")).replace("Z", "+00:00"))
+            payload[f"r{suffix}"] = max(0, int(round((reset.timestamp() - now) / 60.0)))
+        except ValueError:
+            pass
+    return payload
+
+
+def _poll_antigravity_quota() -> dict:
+    agy_bin = shutil.which("agy")
+    if not agy_bin:
+        return {"ok": False}
+    env = dict(os.environ)
+    env.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")  # same reason as poll_antigravity()
+    try:
+        r = subprocess.run([agy_bin, "-p", "/quota", "--output-format", "json"],
+                           capture_output=True, text=True, timeout=60, env=env)
+        doc = json.loads(r.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        log(f"Antigravity: `agy -p /quota` gave no usable output ({type(e).__name__}), "
+            "trying the older local-RPC method")
+        return {"ok": False}
+    return parse_agy_quota(doc)
+
+
 def poll_antigravity(_retry: bool = True) -> dict:
     """Antigravity CLI (`agy`) quota. UNLIKE Codex, `agy`'s local server
     only reports real quota once a cascade/agent session has actually run
@@ -2889,7 +2973,16 @@ def poll_antigravity(_retry: bool = True) -> dict:
     exactly once (`_retry` guards this) specifically for this error text --
     NOT a blanket retry on any {"ok": False}, since every real invocation is a
     paid prompt and most other failure causes (missing binary, never
-    authenticated at all) would just pay twice for nothing."""
+    authenticated at all) would just pay twice for nothing.
+
+    NEWER agy (confirmed on 1.4.2) answers `agy -p "/quota"` itself: free (no
+    model prompt), no port scan. Its local RPC now also 401s without a CSRF
+    token, so the scraping described above cannot work there. That command is
+    tried first; everything below is the fallback for an older agy without it."""
+    if _retry:  # the keyring retry below re-enters with _retry=False: skip the probe
+        quota = _poll_antigravity_quota()
+        if quota.get("ok"):
+            return quota
     agy_bin = shutil.which("agy")
     if not agy_bin:
         log("Antigravity: `agy` not found on PATH")
