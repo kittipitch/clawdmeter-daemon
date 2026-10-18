@@ -3199,7 +3199,7 @@ def do_antigravity_poll() -> None:
 
 
 def antigravity_poller_loop(interval: float) -> None:
-    log(f"Polling Antigravity quota every {interval:.0f}s (real agy prompt each poll -- real cost)")
+    log(f"Polling Antigravity quota every {interval:.0f}s (free `agy -p /quota` on agy >= 1.1.11, a real prompt per poll on older)")
     while not antigravity_state.stop_event.is_set():
         try:
             do_antigravity_poll()
