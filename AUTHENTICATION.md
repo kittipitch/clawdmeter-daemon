@@ -32,7 +32,7 @@ each needs its own account:
 |---|---|---|
 | Claude Code | `npm install -g @anthropic-ai/claude-code` | Claude subscription |
 | Codex CLI | `npm install -g @openai/codex@latest` | ChatGPT plan (not an API key) |
-| `agy` (optional) | see README's Antigravity section | Google account; **costs money per poll** |
+| `agy` (optional) | see README's Antigravity section | Google account; free with `agy` 1.1.11+, a small prompt per poll on older |
 
 Only Claude is needed to get started. Skip the others until their step.
 
@@ -137,11 +137,12 @@ misses.
 **Check:** add `--calendar --calendar-id you@gmail.com`; log shows
 `Calendar: N upcoming, next = '...'`.
 
-### 5. Antigravity — optional, and it costs money
+### 5. Antigravity — optional
 
-⚠ Every poll fires a **real billable prompt**. Skip unless you want the page. Note
-that feature flags are remembered in `~/.clawdmeter-daemon.json`, so once enabled it
-stays on until you pass `--no-antigravity`.
+With `agy` 1.1.11 or newer a poll is **free** (`agy -p "/quota"` prints your quota locally).
+An older `agy` makes every poll fire a **real billable prompt**; run `agy update` first, or
+skip the page. Note that feature flags are remembered in `~/.clawdmeter-daemon.json`, so
+once enabled it stays on until you pass `--no-antigravity`.
 
 `agy` must trust the directory the **service** will run from — decide that now
 (step 6 uses the repo checkout; `systemd --user` defaults to `$HOME`):
@@ -325,10 +326,11 @@ Stored in `~/.codex/auth.json`. Do not copy it to another machine.
 
 ## Antigravity (`agy`)
 
-⚠ **Every poll costs real money.** Unlike Codex's free RPC read, `agy` only reports
-quota once a cascade session has run, so the daemon fires a small real prompt each
-poll. Default interval is 1800 s; consider `--antigravity-interval 3600`, or leave
-the feature off.
+With `agy` **1.1.11 or newer** a poll is free: the daemon runs `agy -p "/quota"`, which
+prints your quota without a model prompt. On an **older** `agy` the daemon fires a small
+real prompt each poll (that is the only way those versions report quota), so run
+`agy update`, or consider `--antigravity-interval 3600`, or leave the feature off. A newer
+`agy` is never retried as a paid prompt when `/quota` fails.
 
 Traps, in the order people hit them:
 

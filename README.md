@@ -848,14 +848,16 @@ python clawdmeter_daemon.py --codex --push-to <device>
 ## Antigravity CLI quota (optional, off by default)
 
 Pushes your Google Antigravity (`agy`) account quota to
-`http://<device>/api/antigravity`. **Not free like Codex** — `agy`'s local
-quota data only populates after a real cascade/agent prompt has run, so
-every poll fires a real, cheap (`gemini-3.6-flash-low`) prompt. Small but
-real cost — kept to a long default interval (30 min) for that reason.
-Needs `agy` already installed and authenticated on this machine, plus **`lsof`** on
-`PATH` — the daemon uses it to find `agy`'s local port (`sudo apt install lsof` on
-Debian/Ubuntu). macOS and Linux only; `lsof` does not exist on native Windows, so the
-page stays empty there.
+`http://<device>/api/antigravity`. With `agy` **1.1.11 or newer** this is **free**: the
+daemon runs `agy -p "/quota"`, which prints your quota locally without sending any
+prompt to a model. Needs `agy` already installed and authenticated on this machine.
+
+An `agy` **older than 1.1.11** (or one whose version cannot be read) has no such command,
+so the daemon falls back to the original method: it fires a real, cheap prompt on every
+poll to make `agy`'s local server report quota, finds that server's port with **`lsof`**
+(`sudo apt install lsof` on Debian/Ubuntu; no `lsof` on native Windows, so the page stays
+empty there), and that costs a small amount per poll. Run `agy update` to leave that path.
+On a newer `agy` a failed `/quota` is never retried as a paid prompt.
 
 **Install** (native Go binary, no Node/npm needed, auto-updates):
 
@@ -906,33 +908,26 @@ IDE does **not** sign in the CLI, and that sign-in needs a real TTY (over SSH,
 run it inside `tmux new-session 'agy'`).
 
 ```json
-{ "ok": true, "pctPro": 4, "labelPro": "3.1 Pro", "rPro": 9180, "pctFlash": 2, "labelFlash": "3.6 Flash", "rFlash": 284 }
+{ "ok": true, "pctPro": 0, "labelPro": "5h", "rPro": 294, "pctFlash": 0, "labelFlash": "7d", "rFlash": 10074 }
 ```
 
-Two real numbers, not one: this account's 11 real model configs split
-into a Gemini Pro family (`gemini-3.1-pro-*`) and a Gemini Flash family
-(`gemini-3.5/3.6-flash-*`) — non-Gemini models this account also has
-access to (Claude Sonnet/Opus, GPT-OSS run through `agy`) aren't shown
-here (they have their own dedicated pages on the device already).
-Selection is **version-first, not quota-first**: each family reports its
-*newest* version present (this account's Flash family spans two
-generations, 3.5 and 3.6 — the daemon always shows 3.6 even if 3.5
-happens to be numerically tighter at some poll), breaking ties among
-that version's own reasoning-tier variants (High/Medium/Low) by lowest
-remaining fraction. `labelPro`/`labelFlash` are the full
-`"<version> <family>"` string (e.g. `"3.6 Flash"`, `"3.1 Pro"`) so the
-device can show which variant is currently backing the number, since it
-can change poll to poll.
+Two windows, laid out like the Claude page: `agy` groups models and gives each group a
+shortest window (5 hours) and a longest (weekly). The daemon shows one group: a group whose
+name contains "gemini" with the most windows (on the plan this was written against, "Gemini
+Models", shared by Gemini Flash and Gemini Pro), else the first group that has a window. Its
+shortest window goes in the top card and its longest in the bottom card, each **labelled by
+its own length** (`5h`, `7d`, `30d`), so a plan with different windows labels itself. A group
+with one window fills only the top card; a window `agy` reports without a number, or under a
+name the daemon does not know, is skipped. Percentages are *used*, `agy` reports *remaining*.
+The field names `pctPro`/`labelPro` (top card) and `pctFlash`/`labelFlash` (bottom card) are
+historical, kept because devices already deployed read exactly those.
 
-**Device rendering note**: fitting a full 9-10 character label next to a
-big percentage forced a device-side tradeoff — the two Antigravity cards
-render their percentage one font size smaller than every other quota
-page (size4 vs. size5). Like every quota page (Claude, z.ai, Codex,
-Antigravity), the displayed number is capped at 99%, and turns red exactly
-when the true percentage is 100 (white otherwise), so a red 99% always
-means fully used. The bar still reacts to the real value. This is purely a
-device-side rendering choice — the pushed payload here always carries the
-true, uncapped percentage.
+**Device rendering note**: like every quota page (Claude, z.ai, Codex, Antigravity), the
+displayed number is capped at 99%, and turns red exactly when the true percentage is 100
+(white otherwise), so a red 99% always means fully used. The bar still reacts to the real
+value. The pushed payload always carries the true, uncapped percentage. Firmware that predates
+the 5h/7d labels draws the number one font size smaller on this page; newer firmware matches
+the other quota pages.
 
 ```
 python clawdmeter_daemon.py --antigravity --push-to <device>
@@ -1054,7 +1049,7 @@ for the full device-side story.
                     but real cost, not a free background read
 --no-antigravity    disable the Antigravity feature (overrides a remembered --antigravity)
 --antigravity-interval N  seconds between Antigravity quota refreshes
-                    (default 1800 -- kept long since each poll has a real cost)
+                    (default 1800; with agy >= 1.1.11 a poll is free, on an older agy it costs a prompt)
 --album [DIR]       feed the Pictures page from a folder of images. Bare
                     `--album` uses ~/Pictures/claudedaemon. Scanned
                     recursively; jpg/jpeg/png/bmp/gif/webp; rescan on every
