@@ -65,6 +65,31 @@ assert parse(doc({"name": "Gemini Models", "buckets": [bucket("fortnightly", 0.5
 assert parse(doc({"name": "Gemini Models", "buckets": [bucket("5h", 0.5)]}), NOW) == {"ok": True, "pctPro": 50, "labelPro": "5h"}  # no reset_time
 assert parse(doc({"name": "Gemini Models", "buckets": [bucket("5h", 0.5, -30)]}), NOW)["rPro"] == 0  # reset already passed
 
+# --- an agy whose JSON lacks command.data: rebuild the groups from the TSV `response` ---
+tsv = ("Gemini Models\tWeekly Limit Remaining\t100%\t" + IN(10077) + "\n"
+       "Gemini Models\tFive Hour Limit Remaining\t75%\t" + IN(297) + "\n"
+       "Claude and GPT models\tWeekly Limit Remaining\t83%\t" + IN(500) + "\n"
+       "Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t99%\t" + IN(9000) + "\n")
+p = parse({"response": tsv}, NOW)
+assert (p["pctPro"], p["labelPro"], p["rPro"], p["pctFlash"], p["labelFlash"]) == (25, "5h", 297, 0, "7d"), p
+assert parse({"response": "just a model answer, no tabs"}, NOW) == {"ok": False}
+
+# --- the version gate: modern agy never reaches the paid prompt path -----------------
+calls = []
+module._poll_antigravity_quota = lambda: calls.append("quota") or {"ok": False, "via": "quota"}
+real_which = module.shutil.which
+module.shutil.which = lambda name: calls.append("legacy") if name == "agy" else real_which(name)  # None: agy "missing"
+try:
+    for ver, want in (((1, 4, 2), "quota"), ((1, 1, 11), "quota"), ((1, 1, 10), "legacy"), (None, "legacy")):
+        calls.clear()
+        module._agy_version = lambda v=ver: v
+        r = module.poll_antigravity()
+        assert calls[0] == want, (ver, calls)
+        if want == "quota":
+            assert r.get("via") == "quota" and calls == ["quota"], (ver, calls, r)  # no legacy call after a failure
+finally:
+    module.shutil.which = real_which
+
 # --- Codex: the long window's real length is sent, so a free plan can be labelled ----
 def codex(primary, secondary=None):
     rl = {"primary": primary, "secondary": secondary}

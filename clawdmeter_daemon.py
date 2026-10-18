@@ -2824,6 +2824,39 @@ def _antigravity_wait_for_status(pid: int, port_deadline: float,
 # The wire keys keep their historical names (pctPro/labelPro = TOP card, pctFlash/
 # labelFlash = BOTTOM card) because deployed firmware reads exactly those.
 _AGY_WINDOW_MINUTES = {"5h": 300, "daily": 1440, "weekly": 10080, "monthly": 43200}
+_AGY_QUOTA_MIN_VERSION = (1, 1, 11)  # first agy whose -p mode answers /quota itself (its changelog)
+
+
+def _agy_version():
+    agy_bin = shutil.which("agy")
+    if not agy_bin:
+        return None
+    try:
+        out = subprocess.run([agy_bin, "--version"], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def _agy_groups_from_tsv(text: str) -> list:
+    """Same groups as the JSON form, rebuilt from the tab-separated `response` text
+    ("group<TAB>bucket name<TAB>NN%<TAB>reset") for an agy whose JSON lacks them."""
+    by_group: dict = {}
+    for line in str(text or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 4 or not parts[2].strip().endswith("%"):
+            continue
+        name = parts[1].lower()
+        window = ("5h" if "five hour" in name or "5 hour" in name else "weekly" if "week" in name
+                  else "monthly" if "month" in name else "daily" if "day" in name else "")
+        try:
+            frac = float(parts[2].strip().rstrip("%")) / 100.0
+        except ValueError:
+            continue
+        by_group.setdefault(parts[0], []).append(
+            {"window": window, "remaining_fraction": frac, "reset_time": parts[3].strip()})
+    return [{"name": g, "buckets": b} for g, b in by_group.items()]
 
 
 def _agy_window_minutes(bucket: dict):
@@ -2843,6 +2876,8 @@ def parse_agy_quota(doc, now: float | None = None) -> dict:
     Returns the device payload, or {"ok": False} when no usable bucket exists."""
     now = time.time() if now is None else now
     groups = (((doc or {}).get("command") or {}).get("data") or {}).get("groups") or []
+    if not groups and isinstance(doc, dict):
+        groups = _agy_groups_from_tsv(doc.get("response"))
     best = None  # (is_gemini, bucket_count, -index) -> the group the device shows
     for i, g in enumerate(groups):
         if not isinstance(g, dict):
@@ -2889,7 +2924,14 @@ def _poll_antigravity_quota() -> dict:
         log(f"Antigravity: `agy -p /quota` gave no usable output ({type(e).__name__}), "
             "trying the older local-RPC method")
         return {"ok": False}
-    return parse_agy_quota(doc)
+    if isinstance(doc, dict) and ((doc.get("num_turns") or 0) > 0 or (doc.get("usage") or {}).get("total_tokens")):
+        log("Antigravity: `agy -p /quota` reached a MODEL (num_turns/usage non-zero), "
+            "this agy does not answer /quota locally; not polling it again until it does")
+        return {"ok": False}
+    quota = parse_agy_quota(doc)
+    if not quota.get("ok"):
+        log("Antigravity: `agy -p /quota` output had no usable quota window")
+    return quota
 
 
 def poll_antigravity(_retry: bool = True) -> dict:
@@ -2975,14 +3017,18 @@ def poll_antigravity(_retry: bool = True) -> dict:
     paid prompt and most other failure causes (missing binary, never
     authenticated at all) would just pay twice for nothing.
 
-    NEWER agy (confirmed on 1.4.2) answers `agy -p "/quota"` itself: free (no
-    model prompt), no port scan. Its local RPC now also 401s without a CSRF
-    token, so the scraping described above cannot work there. That command is
-    tried first; everything below is the fallback for an older agy without it."""
-    if _retry:  # the keyring retry below re-enters with _retry=False: skip the probe
-        quota = _poll_antigravity_quota()
-        if quota.get("ok"):
-            return quota
+    NEWER agy answers `agy -p "/quota"` itself (print-mode answers arrived in
+    1.1.11): free, no model prompt, no port scan. Confirmed on 1.4.2 that the
+    local RPC described above also 401s without a CSRF token, so the scraping
+    cannot work there. For such an agy ONLY the free command is used, and a
+    failure of it never falls through to the paid prompt below: before 1.1.9 a
+    slash command in -p mode goes to the model as ordinary text, so "try /quota,
+    else prompt" could pay twice per poll. An agy older than 1.1.11, or one whose
+    version cannot be read, takes the original path below unchanged."""
+    if _retry:  # the keyring retry below re-enters with _retry=False
+        ver = _agy_version()
+        if ver is not None and ver >= _AGY_QUOTA_MIN_VERSION:
+            return _poll_antigravity_quota()
     agy_bin = shutil.which("agy")
     if not agy_bin:
         log("Antigravity: `agy` not found on PATH")
