@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+Keep the quota pages correct after a plan change.
+
+- **Antigravity now reads `agy -p "/quota"`** (agy 1.1.11 and later) instead of scraping its local RPC and
+  spending a model prompt per poll. agy 1.4 removed models the old poll was hard-coded to and put the
+  RPC behind a CSRF token, so the page went blank. `/quota` is free and needs neither. The device shows
+  the model group's shortest window on top and its longest below, labelled by length (`5h` over `7d`),
+  like the Claude page. A failed `/quota` never falls back to a paid prompt on a new agy; an older agy
+  keeps the original method.
+- **Codex sends the long window's real length (`weekMins`).** A free account's only window is 30 days and
+  was labelled `7d`. Firmware from this release labels it `30d`; Plus and Pro stay `7d`, and older firmware
+  ignores the new key.
+- `test_quota_windows.py` covers both.
+
 Make a silent Google Calendar failure visible, and fix stale setup docs.
 
 - **401/403 from the Calendar API are now logged once per failure streak.**
