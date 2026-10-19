@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+Show the Gemini 4 Argon limit, which is the one that runs out.
+
+- **Antigravity sends Gemini 4 Argon's weekly window** as optional keys `pctArgon`/`labelArgon`/`rArgon`
+  plus the tags `tagFlash` (`Fl`) and `tagArgon` (`Ar`), only when `agy -p "/quota"` reports a group named
+  like "argon". On the reference plan Argon was at 0% remaining while the Gemini group was nearly unused,
+  so `agy` answered "out of quota" while the page read 0%. Firmware from this release draws the bottom
+  card as two halves (`7d ... Fl`, `7d ... Ar`); older firmware ignores the keys and is unchanged.
+  `5h`/`7d` keys are untouched.
+- `test_quota_windows.py` covers the Argon keys, their absence, and Argon as the only group.
+
 Keep the quota pages correct after a plan change.
 
 - **Antigravity now reads `agy -p "/quota"`** (agy 1.1.11 and later) instead of scraping its local RPC and

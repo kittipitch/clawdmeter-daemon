@@ -2873,13 +2873,22 @@ def _agy_window_label(mins: int) -> str:
 
 def parse_agy_quota(doc, now: float | None = None) -> dict:
     """Pure parser for the JSON `agy -p "/quota" --output-format json` prints.
+
+    Wire shape: pctPro/labelPro/rPro = top card (the chosen group's shortest window, the shared 5h),
+    pctFlash/labelFlash/rFlash = bottom-left (its longest window, 7d); both keys unchanged since
+    v1.0.0-kitt29. pctArgon/labelArgon/rArgon = bottom-right half card, the Gemini 4 Argon group's
+    longest window (label = the window, "7d"), sent only when an Argon group other than the chosen
+    one exists; tagFlash ("Fl") and tagArgon ("Ar") then name the two half cards. Live 2026-10-19
+    Argon was the bucket that ran out first (0% left while Gemini Models sat at ~100%), so it is the
+    number that explains an "out of quota" answer. Firmware without the Argon keys drops them and
+    draws 5h/7d exactly as before. Nothing is ever matched by fallback: no "argon" group, no Argon keys.
     Returns the device payload, or {"ok": False} when no usable bucket exists."""
     now = time.time() if now is None else now
     groups = (((doc or {}).get("command") or {}).get("data") or {}).get("groups") or []
     if not groups and isinstance(doc, dict):
         groups = _agy_groups_from_tsv(doc.get("response"))
-    best = None  # (is_gemini, bucket_count, -index) -> the group the device shows
-    for i, g in enumerate(groups):
+    usable = []  # (name, buckets sorted shortest first)
+    for g in groups:
         if not isinstance(g, dict):
             continue
         buckets = []
@@ -2889,24 +2898,42 @@ def parse_agy_quota(doc, now: float | None = None) -> dict:
             # a disabled bucket carries no fraction; unknown windows cannot be labelled
             if isinstance(frac, (int, float)) and mins:
                 buckets.append((mins, b, frac))
-        if not buckets:
-            continue
-        key = ("gemini" in str(g.get("name", "")).lower(), len(buckets), -i)
-        if best is None or key > best[0]:
-            best = (key, sorted(buckets, key=lambda t: t[0]))
-    if best is None:
+        if buckets:
+            usable.append((str(g.get("name", "")), sorted(buckets, key=lambda t: t[0])))
+    if not usable:
         return {"ok": False}
-    chosen = best[1]
-    picks = [chosen[0]] if len(chosen) == 1 else [chosen[0], chosen[-1]]
+    # The card-1 group: prefer a group named like Gemini, then the most windows, then the
+    # first -- the same choice the pre-Argon parser made for its single best group.
+    ti = max(range(len(usable)), key=lambda i: ("gemini" in usable[i][0].lower(),
+                                                len(usable[i][1]), -i))
+    tname, tbuckets = usable[ti]
+    # Top card: the group's shortest window. Bottom card: its longest, as before. The Argon
+    # group (a DIFFERENT group, other than the one above) rides on separate optional keys, so
+    # firmware that does not know them keeps drawing 5h/7d unchanged.
+    ai = max((i for i, (n, _) in enumerate(usable) if "argon" in n.lower() and i != ti),
+             default=None, key=lambda i: (len(usable[i][1]), i))
+    cards = [(tbuckets[0], _agy_window_label(tbuckets[0][0]), "Pro")]
+    if len(tbuckets) > 1:
+        cards.append((tbuckets[-1], _agy_window_label(tbuckets[-1][0]), "Flash"))
+    if ai is not None:
+        cards.append((usable[ai][1][-1], _agy_window_label(usable[ai][1][-1][0]), "Argon"))
     payload: dict = {"ok": True}
-    for (mins, b, frac), suffix in zip(picks, ("Pro", "Flash")):
+    for (mins, b, frac), label, suffix in cards:
         payload[f"pct{suffix}"] = int(round(max(0, min(100, (1 - frac) * 100))))
-        payload[f"label{suffix}"] = _agy_window_label(mins)
+        payload[f"label{suffix}"] = label
         try:
             reset = datetime.fromisoformat(str(b.get("reset_time")).replace("Z", "+00:00"))
             payload[f"r{suffix}"] = max(0, int(round((reset.timestamp() - now) / 60.0)))
         except ValueError:
             pass
+    if ai is not None:
+        # Model tags for the two half cards, shown at the right of each card's label row ("7d ... Fl",
+        # "7d ... Ar"; owner's choice 2026-10-19). The Gemini group's description lists "Flash, Pro", but
+        # `agy models` on this account offers Flash only (probed 2026-10-19: no Pro model), so
+        # the left card is tagged "Fl".
+        payload["tagArgon"] = "Ar"
+        if "pctFlash" in payload:
+            payload["tagFlash"] = "Fl"
     return payload
 
 
