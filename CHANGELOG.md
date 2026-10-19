@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.0.0-kitt30 (2026-10-19)
 
 Show the Gemini 4 Argon limit, which is the one that runs out.
 
@@ -11,6 +11,8 @@ Show the Gemini 4 Argon limit, which is the one that runs out.
   card as two halves (`7d ... Fl`, `7d ... Ar`); older firmware ignores the keys and is unchanged.
   `5h`/`7d` keys are untouched.
 - `test_quota_windows.py` covers the Argon keys, their absence, and Argon as the only group.
+
+## v1.0.0-kitt29 (2026-10-18)
 
 Keep the quota pages correct after a plan change.
 
