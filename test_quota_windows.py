@@ -40,7 +40,24 @@ new_plan = doc(
 )
 p = parse(new_plan, NOW)
 assert p == {"ok": True, "pctPro": 0, "labelPro": "5h", "rPro": 297,
-             "pctFlash": 0, "labelFlash": "7d", "rFlash": 10077}, p  # 5h on top, 7d below, Gemini group
+             "pctFlash": 0, "labelFlash": "7d", "rFlash": 10077,
+             "pctArgon": 1, "labelArgon": "7d", "rArgon": 10080,
+             "tagArgon": "Ar", "tagFlash": "Fl"}, p  # 5h top; halves "7d ... Fl" | "7d ... Ar" below
+
+# --- no Argon group: no Argon keys at all (never a fallback guess), 5h/7d as before ---------
+p = parse(doc({"name": "Gemini Models", "buckets": [bucket("weekly", 0.9995788, 10077), bucket("5h", 0.9985259, 297)]}), NOW)
+assert p["labelFlash"] == "7d" and p["pctFlash"] == 0 and not any("Argon" in k for k in p), p
+assert "tagFlash" not in p, p  # a whole bottom card has no model tag
+
+# --- Argon exhausted, as live on 2026-10-19: 100% used, reset carried ------------------------
+p = parse(doc({"name": "Gemini Models", "buckets": [bucket("weekly", 0.9975751, 8280), bucket("5h", 1, 297)]},
+              {"name": "Gemini 4 Argon", "buckets": [bucket("weekly", 0, 8280)]}), NOW)
+assert (p["pctArgon"], p["labelArgon"], p["rArgon"], p["pctFlash"]) == (100, "7d", 8280, 0), p
+
+# --- Argon as the ONLY usable group: it is the main group (5h/7d), no separate Argon keys ----
+p = parse(doc({"name": "Gemini 4 Argon", "buckets": [bucket("weekly", 0.5, 9000), bucket("5h", 0.25, 60)]}), NOW)
+assert (p["pctPro"], p["labelPro"], p["pctFlash"], p["labelFlash"]) == (75, "5h", 50, "7d"), p
+assert not any("Argon" in k for k in p) and "tagFlash" not in p, p
 
 # bucket order in the response must not matter, and a used quota maps to used %
 shuffled = doc({"name": "Gemini Models", "buckets": [bucket("5h", 0.25, 60), bucket("weekly", 0.5, 9000)]})
@@ -72,6 +89,7 @@ tsv = ("Gemini Models\tWeekly Limit Remaining\t100%\t" + IN(10077) + "\n"
        "Gemini 4 Argon\tGemini 4 Argon Weekly Limit\t99%\t" + IN(9000) + "\n")
 p = parse({"response": tsv}, NOW)
 assert (p["pctPro"], p["labelPro"], p["rPro"], p["pctFlash"], p["labelFlash"]) == (25, "5h", 297, 0, "7d"), p
+assert (p["pctArgon"], p["labelArgon"], p["tagArgon"], p["tagFlash"]) == (1, "7d", "Ar", "Fl"), p
 assert parse({"response": "just a model answer, no tabs"}, NOW) == {"ok": False}
 
 # --- the version gate: modern agy never reaches the paid prompt path -----------------

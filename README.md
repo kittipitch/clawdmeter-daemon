@@ -908,8 +908,19 @@ IDE does **not** sign in the CLI, and that sign-in needs a real TTY (over SSH,
 run it inside `tmux new-session 'agy'`).
 
 ```json
-{ "ok": true, "pctPro": 0, "labelPro": "5h", "rPro": 294, "pctFlash": 0, "labelFlash": "7d", "rFlash": 10074 }
+{ "ok": true, "pctPro": 0, "labelPro": "5h", "rPro": 294, "pctFlash": 0, "labelFlash": "7d", "rFlash": 10074,
+  "pctArgon": 100, "labelArgon": "7d", "rArgon": 8280, "tagFlash": "Fl", "tagArgon": "Ar" }
 ```
+
+The last five keys are optional. When `agy` also reports a group whose name contains "argon" (Gemini 4
+Argon has its own weekly limit, and it can be exhausted while the Gemini group is almost untouched,
+which is exactly when `agy` answers "out of quota"), the daemon adds that group's longest window as
+`pctArgon`/`labelArgon`/`rArgon`, and the two short model tags `tagFlash` (`Fl`) and `tagArgon` (`Ar`).
+Firmware from this release then splits the bottom card in two halves, `7d ... Fl` on the left and
+`7d ... Ar` on the right; older firmware ignores the new keys and keeps drawing `5h` over `7d`. With no
+group named "argon" none of these keys are sent: the daemon never guesses a substitute. The tag is only a
+name: on the plan this was written against `agy models` offers Gemini Flash and no Pro model, although the
+Gemini group's description says "Flash, Pro".
 
 Two windows, laid out like the Claude page: `agy` groups models and gives each group a
 shortest window (5 hours) and a longest (weekly). The daemon shows one group: a group whose
