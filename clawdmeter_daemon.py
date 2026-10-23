@@ -194,6 +194,7 @@ DEFAULT_ANTIGRAVITY_INTERVAL = 1800    # s; UNLIKE Codex, each poll fires a real
                                         # not just convention.
 DEFAULT_OPENROUTER_INTERVAL = 300       # s; OpenRouter is one cheap authenticated GET,
                                         # no model/token cost, so a short interval is fine.
+DEFAULT_COPILOT_INTERVAL = 300          # s; one authenticated GitHub quota read, no model request
 
 
 # A daemon launched windowless (pythonw) or headless has no visible console, so
@@ -256,6 +257,8 @@ def load_config() -> dict:
         "calendar_interval": DEFAULT_CALENDAR_INTERVAL,
         "weather_enabled": False,              # off by default, matches every other opt-in feature here
         "weather_interval": DEFAULT_WEATHER_INTERVAL,
+        "copilot_enabled": False,              # needs `gh auth login` on this machine
+        "copilot_interval": DEFAULT_COPILOT_INTERVAL,
     }
     try:
         cfg.update(json.loads(CONFIG_PATH.read_text()))
@@ -440,6 +443,10 @@ codex_state = State()
 # credential of its own -- relies on `agy` already being authenticated on
 # this machine.
 antigravity_state = State()
+
+# GitHub Copilot quota feature: same generic State reuse. It uses the existing
+# GitHub CLI login on this machine; no token is read or persisted by the daemon.
+copilot_state = State()
 
 
 # ---- Credential / token management ----------------------------------------
@@ -2708,6 +2715,123 @@ def codex_push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
         codex_state.push_kick_event.clear()
 
 
+def _copilot_quota_call() -> dict | None:
+    """Read Copilot's quota summary through the authenticated GitHub CLI.
+
+    `/copilot_internal/user` is an undocumented GitHub endpoint, so callers
+    treat malformed or changed responses as unavailable rather than guessing at
+    a quota. `gh` keeps its credential in its own secure store; this daemon
+    neither reads nor logs it.
+    """
+    gh_bin = shutil.which("gh")
+    if not gh_bin:
+        log("Copilot: `gh` not found on PATH - install GitHub CLI and run `gh auth login`")
+        return None
+    try:
+        result = _run(
+            [gh_bin, "api", "-H", "Accept: application/vnd.github+json", "/copilot_internal/user"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log(f"Copilot: quota request failed: {e}")
+        return None
+    if result.returncode != 0:
+        log("Copilot: quota request failed - check `gh auth status` and Copilot access")
+        return None
+    try:
+        response = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        log("Copilot: quota response was not JSON")
+        return None
+    return response if isinstance(response, dict) else None
+
+
+def poll_copilot(now: float | None = None) -> dict:
+    """Return used percentages for Copilot Chat and Completions.
+
+    Copilot publishes no rolling 5h/7d windows here. The account-wide
+    `quota_reset_date_utc` is the next monthly billing-cycle reset, shared by
+    every quota snapshot. Categories with `has_quota=false` are deliberately
+    absent: zero entitlement is not zero usage.
+    """
+    response = _copilot_quota_call()
+    if not response:
+        return {"ok": False}
+    snapshots = response.get("quota_snapshots")
+    if not isinstance(snapshots, dict):
+        log("Copilot: quota response has no quota_snapshots")
+        return {"ok": False}
+
+    reset_mins = None
+    reset_raw = response.get("quota_reset_date_utc") or response.get("quota_reset_date")
+    if isinstance(reset_raw, str) and reset_raw:
+        try:
+            reset_at = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
+            if reset_at.tzinfo is None:
+                reset_at = reset_at.replace(tzinfo=timezone.utc)
+            seconds = reset_at.timestamp() - (time.time() if now is None else now)
+            reset_mins = int(round(seconds / 60.0)) if seconds > 0 else 0
+        except ValueError:
+            log("Copilot: quota response has an invalid reset date")
+
+    payload: dict = {"ok": True}
+    for snapshot_name, pct_key, reset_key in (
+        ("chat", "pctChat", "rChat"),
+        ("completions", "pctCompletions", "rCompletions"),
+    ):
+        snapshot = snapshots.get(snapshot_name)
+        if not isinstance(snapshot, dict) or snapshot.get("has_quota") is not True:
+            continue
+        remaining = snapshot.get("percent_remaining")
+        if not isinstance(remaining, (int, float)):
+            continue
+        payload[pct_key] = int(round(max(0.0, min(100.0, 100.0 - remaining))))
+        if reset_mins is not None:
+            payload[reset_key] = reset_mins
+
+    payload["ok"] = len(payload) > 1
+    if not payload["ok"]:
+        log("Copilot: quota response has no enabled Chat or Completions allowance")
+    return payload
+
+
+def do_copilot_poll() -> None:
+    payload = poll_copilot()
+    copilot_state.set_payload(payload)
+    if len(payload) > 1:
+        log(f"Copilot: {payload}")
+
+
+def copilot_poller_loop(interval: float) -> None:
+    log(f"Polling Copilot quota every {interval:.0f}s (GitHub CLI, read-only)")
+    while not copilot_state.stop_event.is_set():
+        try:
+            do_copilot_poll()
+        except Exception as e:
+            log(f"Copilot poll: unexpected error, will retry next interval: {e}")
+        copilot_state.refresh_event.wait(interval)
+        copilot_state.refresh_event.clear()
+
+
+def copilot_push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
+    """Push the current Copilot quota snapshot to /api/copilot."""
+    log(f"HTTP Copilot push every {interval:.0f}s")
+    while not stop.is_set():
+        payload = copilot_state.get_payload()
+        urls = targets_fn()
+        if payload.get("ok") and len(payload) > 1 and urls:
+            for url in urls:
+                copilot_url = _resolve_url_for_push(url.replace("/api/usage", "/api/copilot"))
+                try:
+                    response = httpx.post(copilot_url, json=payload, timeout=10.0, headers=_push_headers())
+                    if response.status_code >= 400:
+                        log(f"Copilot push {copilot_url} HTTP {response.status_code}")
+                except httpx.HTTPError as e:
+                    log(f"Copilot push {copilot_url} failed: {e}")
+        copilot_state.push_kick_event.wait(interval)
+        copilot_state.push_kick_event.clear()
+
+
 ANTIGRAVITY_PROMPT_MODEL = "gemini-3.6-flash-low"  # cheapest model on this plan's list
 ANTIGRAVITY_PORT_WAIT_S   = 90   # `agy` can stall ~58s before listening on a
                                  # DNS-less boot; must exceed that comfortably
@@ -3585,6 +3709,7 @@ def push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
                         zai_state.push_kick_event.set()
                         openrouter_state.push_kick_event.set()
                         codex_state.push_kick_event.set()
+                        copilot_state.push_kick_event.set()
                         # Antigravity's push (re-sending its cached payload
                         # sooner) is free, so it gets kicked like the others.
                         # Its refresh_event is deliberately NOT kicked here --
@@ -3601,6 +3726,7 @@ def push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
                         zai_state.refresh_event.set()
                         openrouter_state.refresh_event.set()
                         codex_state.refresh_event.set()
+                        copilot_state.refresh_event.set()
                 except httpx.HTTPError as e:
                     log(f"Push {url} failed: {e}")
                     ok_urls.discard(url)
@@ -4321,6 +4447,12 @@ def main() -> None:
                     help="disable the Codex feature (overrides a previously remembered --codex)")
     ap.add_argument("--codex-interval", type=float, default=None,
                     help=f"seconds between Codex quota refreshes (default {DEFAULT_CODEX_INTERVAL:.0f})")
+    ap.add_argument("--copilot", action="store_true",
+                    help="enable GitHub Copilot quota push (needs `gh auth login` with Copilot access)")
+    ap.add_argument("--no-copilot", action="store_true",
+                    help="disable the Copilot feature (overrides a previously remembered --copilot)")
+    ap.add_argument("--copilot-interval", type=float, default=None,
+                    help=f"seconds between Copilot quota refreshes (default {DEFAULT_COPILOT_INTERVAL:.0f})")
     # Antigravity CLI (`agy`) quota (optional feature, off by default).
     # UNLIKE Codex, this fires a real, tiny prompt every poll -- a genuine
     # cost, not free (see poll_antigravity() for why no free path exists).
@@ -4430,6 +4562,12 @@ def main() -> None:
         cfg["codex_enabled"] = False
     if args.codex_interval is not None:
         cfg["codex_interval"] = args.codex_interval
+    if args.copilot:
+        cfg["copilot_enabled"] = True
+    if args.no_copilot:
+        cfg["copilot_enabled"] = False
+    if args.copilot_interval is not None:
+        cfg["copilot_interval"] = args.copilot_interval
     if args.antigravity:
         cfg["antigravity_enabled"] = True
     if args.no_antigravity:
@@ -4552,6 +4690,20 @@ def main() -> None:
                              daemon=True).start()
         else:
             log("Codex enabled but no --push-to host configured - nothing to push to")
+
+    # Copilot: independent of the primary Transport too, same pattern as Codex.
+    if cfg.get("copilot_enabled"):
+        copilot_targets = tuple(_static_push_urls(cfg))
+        if copilot_targets:
+            copilot_interval = float(cfg.get("copilot_interval", DEFAULT_COPILOT_INTERVAL))
+            threading.Thread(target=copilot_poller_loop, args=(copilot_interval,), daemon=True).start()
+            copilot_stop = threading.Event()
+            threading.Thread(target=copilot_push_loop,
+                             args=(copilot_stop, lambda: copilot_targets,
+                                   float(cfg.get("push_interval", DEFAULT_PUSH_INTERVAL))),
+                             daemon=True).start()
+        else:
+            log("Copilot enabled but no --push-to host configured - nothing to push to")
 
     # Antigravity: independent of the primary Transport too, same reasoning
     # as z.ai/Codex. Real per-poll cost -- see poll_antigravity().

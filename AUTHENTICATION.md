@@ -115,7 +115,20 @@ codex login                  # or: codex login --device-auth   (headless / SSH)
 ⚠ Never run bare `codex login` "just to look" on a machine with a working session —
 it wipes the session before completing the new one.
 
-### 3. Weather (no credential at all)
+### 3. GitHub Copilot (read-only GitHub CLI request)
+
+Install the [GitHub CLI](https://cli.github.com/) and authenticate the account
+that has Copilot access:
+
+```bash
+gh auth login
+```
+
+**Check:** add `--copilot`; log shows `Copilot: {'ok': True, ...}`. It reports
+the independent Chat and Completions allowances, both on the next monthly
+billing-cycle reset. This is a read-only GitHub request, not a model prompt.
+
+### 4. Weather (no credential at all)
 
 Set the location **on the device**, in its Agenda & weather tab (lat/lon). The
 daemon reads it from `/api/config`; there is no daemon-side fallback.
@@ -124,7 +137,7 @@ daemon reads it from `/api/config`; there is no daemon-side fallback.
 If you see *neither* a `Weather:` line nor an error, the device's lat/lon are still
 0/0 — that case is silent.
 
-### 4. Google Calendar (service account)
+### 5. Google Calendar (service account)
 
 Longest step. Click-by-click walkthrough with every URL:
 <https://kittipitch.github.io/smalltv-mod/getting-started/google-calendar/>; terse
@@ -137,7 +150,7 @@ misses.
 **Check:** add `--calendar --calendar-id you@gmail.com`; log shows
 `Calendar: N upcoming, next = '...'`.
 
-### 5. Antigravity — optional
+### 6. Antigravity — optional
 
 With `agy` 1.1.11 or newer a poll is **free** (`agy -p "/quota"` prints your quota locally).
 An older `agy` makes every poll fire a **real billable prompt**; run `agy update` first, or
@@ -145,7 +158,7 @@ skip the page. Note that feature flags are remembered in `~/.clawdmeter-daemon.j
 once enabled it stays on until you pass `--no-antigravity`.
 
 `agy` must trust the directory the **service** will run from — decide that now
-(step 6 uses the repo checkout; `systemd --user` defaults to `$HOME`):
+(step 7 uses the repo checkout; `systemd --user` defaults to `$HOME`):
 
 ```bash
 cd ~/clawdmeter-daemon       # the future WorkingDirectory
@@ -155,7 +168,7 @@ agy                          # bare, in a GUI terminal; accept "trust this folde
 **Check:** `agy models` lists models, then add `--antigravity
 --antigravity-interval 3600` and look for `Antigravity: {'ok': True, ...}`.
 
-### 6. Only now, install it as a service
+### 7. Only now, install it as a service
 
 Get everything working in the foreground first. A service adds a minimal
 environment, a different working directory, and no shell profile — three new failure
@@ -185,6 +198,7 @@ usage (no `WorkingDirectory`, no PATH). This one is proven:
         <string>--push-to</string><string>DEVICE.local</string>
         <string>--no-discover</string>
         <string>--codex</string>
+        <string>--copilot</string>
         <string>--weather</string>
     </array>
     <key>WorkingDirectory</key><string>/Users/YOU/clawdmeter-daemon</string>
@@ -709,6 +723,10 @@ ExecStart=%h/clawdmeter-daemon/.venv/bin/python %h/clawdmeter-daemon/clawdmeter_
 EnvironmentFile=%h/.config/clawdmeter/token.env
 Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 ```
+
+Add `--copilot` to this service only after running `gh auth login` as the
+same service user for an account with Copilot access; it is intentionally not
+part of this deployed example.
 
 with `token.env` holding `CLAUDE_CODE_OAUTH_TOKEN`, `CLAWDMETER_ZAI_KEY` and
 `GOOGLE_APPLICATION_CREDENTIALS`. Run **`loginctl enable-linger $USER`** or the

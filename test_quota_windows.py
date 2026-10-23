@@ -92,6 +92,31 @@ assert (p["pctPro"], p["labelPro"], p["rPro"], p["pctFlash"], p["labelFlash"]) =
 assert (p["pctArgon"], p["labelArgon"], p["tagArgon"], p["tagFlash"]) == (1, "7d", "Ar", "Fl"), p
 assert parse({"response": "just a model answer, no tabs"}, NOW) == {"ok": False}
 
+# --- Copilot: independent Chat/Completions monthly allowances --------------------
+module._copilot_quota_call = lambda: {
+    "quota_reset_date_utc": IN(10077),
+    "quota_snapshots": {
+        "chat": {"has_quota": True, "percent_remaining": 75.4},
+        "completions": {"has_quota": True, "percent_remaining": 0},
+        "premium_interactions": {"has_quota": False, "percent_remaining": 100},
+    },
+}
+p = module.poll_copilot(NOW)
+assert p == {"ok": True, "pctChat": 25, "rChat": 10077,
+             "pctCompletions": 100, "rCompletions": 10077}, p
+
+module._copilot_quota_call = lambda: {
+    "quota_reset_date": "2027-02-01",
+    "quota_snapshots": {"chat": {"has_quota": True, "percent_remaining": 100}},
+}
+p = module.poll_copilot(1_800_000_000.0)
+assert p["pctChat"] == 0 and p["rChat"] > 0 and "pctCompletions" not in p, p
+
+module._copilot_quota_call = lambda: {
+    "quota_snapshots": {"premium_interactions": {"has_quota": False, "percent_remaining": 100}},
+}
+assert module.poll_copilot(NOW) == {"ok": False}
+
 # --- the version gate: modern agy never reaches the paid prompt path -----------------
 calls = []
 module._poll_antigravity_quota = lambda: calls.append("quota") or {"ok": False, "via": "quota"}

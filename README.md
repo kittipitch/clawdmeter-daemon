@@ -88,9 +88,9 @@ This merges the two device-specific daemons into one:
 - **Clawdmeter (ESP32‑S3, serial):** https://github.com/giovi321/clawdmeter-win
 - **SmallTV (ESP8266, HTTP):** https://github.com/kittipitch/smalltv-mod — the
   fork this daemon is built for. Plain upstream `giovi321/smalltv-mod` only has
-  `/api/usage`; the Calendar/Weather/z.ai/OpenRouter/Codex/Antigravity features this
+  `/api/usage`; the Calendar/Weather/z.ai/OpenRouter/Codex/Copilot/Antigravity features this
   README documents need the fork's `/api/calendar`, `/api/weather`, `/api/zai`,
-  `/api/openrouter`, `/api/codex`, and `/api/antigravity` endpoints, which
+  `/api/openrouter`, `/api/codex`, `/api/copilot`, and `/api/antigravity` endpoints, which
   upstream doesn't have.
 
 > Not affiliated with Anthropic. The throwaway API call it makes (cheapest model,
@@ -276,10 +276,10 @@ The daemon needs a Claude token. In order it tries:
 > **Setting up a new machine?** Start with **[AUTHENTICATION.md](AUTHENTICATION.md)** —
 > it opens with an ordered start-to-finish walkthrough (get Claude working first,
 > then add one feature at a time, install the service last), and then serves as the
-> per-harness token guide — Claude, Codex, Antigravity, z.ai, OpenRouter and Google
+> per-harness token guide — Claude, Codex, Copilot, Antigravity, z.ai, OpenRouter and Google
 > Calendar — including which credentials can be copied between machines (Claude,
 > z.ai, OpenRouter, Google service account) and which must be re-logged per machine
-> (Codex, Calendar OAuth, Antigravity), plus the PATH/environment traps that make a
+> (Codex, Copilot, Calendar OAuth, Antigravity), plus the PATH/environment traps that make a
 > service manager silently report no data.
 
 1. **`CLAUDE_CODE_OAUTH_TOKEN`** env var — a **long-lived token** from
@@ -443,7 +443,7 @@ Three things a headless box needs that a desktop session gets for free:
   above.
 - **`systemd --user` services run with a minimal PATH** that does NOT include
   `~/.local/bin` or npm global directories. This matters if you use features
-  that shell out to external CLIs — `codex` (Codex quota) and `trans`
+  that shell out to external CLIs — `codex` (Codex quota), `gh` (Copilot quota) and `trans`
   (translate-shell for non-English calendar titles) will be silently "not
   found" (Codex reports no rate limits, `trans` is simply skipped). Fix: add
   an explicit `Environment=PATH=` line under `[Service]` with the full path,
@@ -845,6 +845,25 @@ unused, so you know to use it before it's gone.
 python clawdmeter_daemon.py --codex --push-to <device>
 ```
 
+## GitHub Copilot quota (optional, off by default)
+
+Pushes the GitHub Copilot **Chat** and **Completions** allowances to
+`http://<device>/api/copilot`. These are independent monthly quotas, not
+Claude-style rolling 5-hour or 7-day windows; both cards show the account's
+next billing-cycle reset. The daemon uses one read-only GitHub CLI request per
+poll, with no model prompt or Copilot usage cost.
+
+Install [GitHub CLI](https://cli.github.com/), then authenticate the account
+that has Copilot access:
+
+```sh
+gh auth login
+python clawdmeter_daemon.py --copilot --push-to <device>
+```
+
+The GitHub endpoint is undocumented, so unavailable or changed quota data
+leaves the page out of the carousel rather than displaying guessed values.
+
 ## Antigravity CLI quota (optional, off by default)
 
 Pushes your Google Antigravity (`agy`) account quota to
@@ -933,7 +952,7 @@ name the daemon does not know, is skipped. Percentages are *used*, `agy` reports
 The field names `pctPro`/`labelPro` (top card) and `pctFlash`/`labelFlash` (bottom card) are
 historical, kept because devices already deployed read exactly those.
 
-**Device rendering note**: like every quota page (Claude, z.ai, Codex, Antigravity), the
+**Device rendering note**: like every quota page (Claude, z.ai, Codex, Copilot, Antigravity), the
 displayed number is capped at 99%, and turns red exactly when the true percentage is 100
 (white otherwise), so a red 99% always means fully used. The bar still reacts to the real
 value. The pushed payload always carries the true, uncapped percentage. Firmware that predates
@@ -1054,6 +1073,11 @@ for the full device-side story.
                     plan's included usage; no separate API key or cost
 --no-codex          disable the Codex feature (overrides a remembered --codex)
 --codex-interval N  seconds between Codex quota refreshes (default 300)
+--copilot           enable GitHub Copilot Chat/Completions quota push --
+                    needs `gh auth login` with Copilot access on this machine;
+                    one read-only GitHub request per poll, no model cost
+--no-copilot        disable the Copilot feature (overrides a remembered --copilot)
+--copilot-interval N  seconds between Copilot quota refreshes (default 300)
 --antigravity       enable Antigravity CLI (`agy`) quota push -- needs
                     `agy` authenticated on this machine. UNLIKE --codex,
                     every poll fires a real cheap-model prompt -- a small
@@ -1195,7 +1219,7 @@ z.ai-side change, that's why.
 - USB/Windows fork: [clawdmeter-win](https://github.com/giovi321/clawdmeter-win).
 - SmallTV firmware, original: [giovi321/smalltv-mod](https://github.com/giovi321/smalltv-mod).
   This daemon is built to pair with [kittipitch/smalltv-mod](https://github.com/kittipitch/smalltv-mod),
-  a fork adding the Agenda/Weather/z.ai/Codex/Antigravity quota pages this
+  a fork adding the Agenda/Weather/z.ai/Codex/Copilot/Antigravity quota pages this
   README documents (see that repo for the firmware side).
 
 ## License
