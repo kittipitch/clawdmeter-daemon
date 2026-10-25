@@ -105,6 +105,28 @@ p = module.poll_copilot(NOW)
 assert p == {"ok": True, "pctChat": 25, "rChat": 10077,
              "pctCompletions": 100, "rCompletions": 10077}, p
 
+# premium_interactions is the plan's real paid-request allowance (live 2026-10-25 it
+# was the only snapshot with usage; chat/completions were unlimited at 100 remaining)
+module._copilot_quota_call = lambda: {
+    "quota_reset_date_utc": IN(10077),
+    "quota_snapshots": {
+        "chat": {"has_quota": True, "percent_remaining": 100},
+        "completions": {"has_quota": True, "percent_remaining": 100},
+        "premium_interactions": {"has_quota": True, "percent_remaining": 60.2},
+    },
+}
+p = module.poll_copilot(NOW)
+assert p == {"ok": True, "pctPremium": 40, "rPremium": 10077,
+             "pctChat": 0, "rChat": 10077,
+             "pctCompletions": 0, "rCompletions": 10077}, p
+
+# a disabled premium snapshot simply stops being sent (never invented)
+module._copilot_quota_call = lambda: {
+    "quota_snapshots": {"premium_interactions": {"has_quota": False, "percent_remaining": 40}},
+}
+p = module.poll_copilot(NOW)
+assert p == {"ok": False} and "pctPremium" not in p, p
+
 module._copilot_quota_call = lambda: {
     "quota_reset_date": "2027-02-01",
     "quota_snapshots": {"chat": {"has_quota": True, "percent_remaining": 100}},

@@ -2747,12 +2747,18 @@ def _copilot_quota_call() -> dict | None:
 
 
 def poll_copilot(now: float | None = None) -> dict:
-    """Return used percentages for Copilot Chat and Completions.
+    """Return used percentages for Copilot Premium, Chat and Completions.
 
     Copilot publishes no rolling 5h/7d windows here. The account-wide
     `quota_reset_date_utc` is the next monthly billing-cycle reset, shared by
     every quota snapshot. Categories with `has_quota=false` are deliberately
     absent: zero entitlement is not zero usage.
+
+    `premium_interactions` (pctPremium) is the plan's paid-request allowance --
+    live 2026-10-25 it was the ONLY snapshot carrying real usage (60.2%% remaining
+    = the statusline's 39%% used), while chat/completions reported 100%% remaining
+    (unlimited), which had left the device page at 0%%. Sent as optional keys; a
+    snapshot that disappears simply stops being sent.
     """
     response = _copilot_quota_call()
     if not response:
@@ -2776,6 +2782,7 @@ def poll_copilot(now: float | None = None) -> dict:
 
     payload: dict = {"ok": True}
     for snapshot_name, pct_key, reset_key in (
+        ("premium_interactions", "pctPremium", "rPremium"),
         ("chat", "pctChat", "rChat"),
         ("completions", "pctCompletions", "rCompletions"),
     ):
@@ -2791,7 +2798,7 @@ def poll_copilot(now: float | None = None) -> dict:
 
     payload["ok"] = len(payload) > 1
     if not payload["ok"]:
-        log("Copilot: quota response has no enabled Chat or Completions allowance")
+        log("Copilot: quota response has no enabled Chat, Premium or Completions allowance")
     return payload
 
 
