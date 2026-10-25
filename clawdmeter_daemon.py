@@ -1874,6 +1874,7 @@ def poll_weather(lat: float, lon: float) -> dict:
             # days, not UTC ones -- confirmed live this matters (Chiang
             # Mai is UTC+7, a UTC-day bucket would span the wrong window).
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+            "hourly": "temperature_2m,weather_code,precipitation_probability",
             "timezone": "auto",
             "forecast_days": 4,
         }, timeout=15.0)
@@ -1927,6 +1928,39 @@ def poll_weather(lat: float, lon: float) -> dict:
             forecast_dates.append(dtimes[i])
         if forecast:
             payload["forecast"] = forecast
+
+        # Next-3-hours slice (owner 2026-10-25: a page after the current-weather
+        # one, cards like the agenda's). Same request, its "hourly" block is local
+        # (timezone=auto). The first entry STRICTLY AFTER the current hour is
+        # "next hour" -- including the running hour would repeat the current-
+        # weather page. Labels are the HH:00 slice of the local ISO time; kept
+        # as ISO-prefix keys (hourly_dates) so the AQI pass can match per-hour
+        # PM2.5 by the same construction as forecast_dates.
+        hourly_out = []
+        hourly_dates = []
+        hb = body.get("hourly", {})
+        htimes = hb.get("time", [])
+        htemp = hb.get("temperature_2m", [])
+        hcode = hb.get("weather_code", [])
+        hprecip = hb.get("precipitation_probability", [])
+        cur_key = (cur.get("time") or "")[:13]
+        if htimes and cur_key:
+            for i, t in enumerate(htimes):
+                if t[:13] <= cur_key:
+                    continue
+                if i >= len(htemp) or htemp[i] is None:
+                    break
+                hour = {"time": t[11:16]}
+                if i < len(hcode): hour["code"] = hcode[i]
+                hour["temp"] = round(htemp[i])
+                if i < len(hprecip) and hprecip[i] is not None:
+                    hour["precip"] = hprecip[i]
+                hourly_out.append(hour)
+                hourly_dates.append(t[:13])
+                if len(hourly_out) == 3:
+                    break
+        if hourly_out:
+            payload["hourly"] = hourly_out
     except (httpx.HTTPError, ValueError) as e:
         log(f"Weather: forecast fetch failed: {e}")
 
@@ -2025,6 +2059,21 @@ def poll_weather(lat: float, lon: float) -> dict:
                     day["aqi"] = int(pyaqi.to_iaqi(pyaqi.POLLUTANT_PM25, str(clamped), algo=pyaqi.ALGO_EPA))
                 except (IndexError, InvalidOperation, ValueError, TypeError) as e:
                     log(f"Weather: forecast aqi computation failed for {iso_date}: {e}")
+
+        # Per-hour AQI for the next-3-hours page: same local-hour -> PM2.5
+        # mapping, one EPA AQI per chosen hour (or omitted when that hour has
+        # no reading -- never invented).
+        if hourly_dates:
+            hour_pm25 = {t[:13]: v for t, v in zip(times, pm25s) if v is not None}  # keys to "YYYY-MM-DDTHH"
+            for hour, iso_hour in zip(payload.get("hourly", []), hourly_dates):
+                v = hour_pm25.get(iso_hour)
+                if v is None:
+                    continue
+                try:
+                    clamped = max(0.0, min(500.4, float(v)))
+                    hour["aqi"] = int(pyaqi.to_iaqi(pyaqi.POLLUTANT_PM25, str(clamped), algo=pyaqi.ALGO_EPA))
+                except (IndexError, InvalidOperation, ValueError, TypeError) as e:
+                    log(f"Weather: hourly aqi computation failed for {iso_hour}: {e}")
     except (httpx.HTTPError, ValueError) as e:
         log(f"Weather: air-quality forecast fetch failed: {e}")
 
