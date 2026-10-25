@@ -1874,7 +1874,7 @@ def poll_weather(lat: float, lon: float) -> dict:
             # days, not UTC ones -- confirmed live this matters (Chiang
             # Mai is UTC+7, a UTC-day bucket would span the wrong window).
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
-            "hourly": "temperature_2m,weather_code,precipitation_probability",
+            "hourly": "temperature_2m,weather_code,precipitation_probability,is_day",
             "timezone": "auto",
             "forecast_days": 4,
         }, timeout=15.0)
@@ -1943,6 +1943,7 @@ def poll_weather(lat: float, lon: float) -> dict:
         htemp = hb.get("temperature_2m", [])
         hcode = hb.get("weather_code", [])
         hprecip = hb.get("precipitation_probability", [])
+        hisday = hb.get("is_day", [])
         cur_key = (cur.get("time") or "")[:13]
         if htimes and cur_key:
             for i, t in enumerate(htimes):
@@ -1955,6 +1956,11 @@ def poll_weather(lat: float, lon: float) -> dict:
                 hour["temp"] = round(htemp[i])
                 if i < len(hprecip) and hprecip[i] is not None:
                     hour["precip"] = hprecip[i]
+                # the API's own per-hour daylight answer (same source as current "isDay"):
+                # the device swaps a clear sun for the moon after dark. Never derived from
+                # a clock -- an absent value means "draw the sun", exactly as before.
+                if i < len(hisday) and hisday[i] is not None:
+                    hour["isDay"] = int(hisday[i])
                 hourly_out.append(hour)
                 hourly_dates.append(t[:13])
                 if len(hourly_out) == 3:
