@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.0.0-kitt32 (2026-10-25)
+
+Report the Copilot premium allowance and send a next-3-hours weather slice.
+
+- **Copilot sends the `premium_interactions` allowance as optional keys `pctPremium`/`rPremium`.** When the Chat
+  and Completions snapshots report unlimited, `premium_interactions` is the snapshot carrying the real usage;
+  it is converted like the others, and a disabled or missing snapshot simply stops being sent. Firmware from
+  this release shows the Premium allowance as the whole card on top with Chat | Code halves below; older
+  firmware ignores the new keys and is unchanged.
+- **The weather payload carries an optional `hourly` array: the three hours strictly after the running one.**
+  Each entry has a local HH:MM `time`, rounded `temp` and weather `code`, and — only when the source has a
+  reading — `precip` (probability), `aqi` (per-hour EPA AQI from the local PM2.5 forecast) and `isDay` (1/0),
+  so the device can draw the moon for clear hours after dark. Nothing is derived from a clock. Firmware from
+  this release draws the slice as thin-line rows; older firmware ignores the key and is unchanged.
+- `test_quota_windows.py` covers the premium conversion and the never-invented rule.
+
+## v1.0.0-kitt31 (2026-10-23)
+
+Read the Copilot quota through the GitHub CLI and push it to the device.
+
+- **New `--copilot` feature polls `gh api /copilot_internal/user`** (an undocumented endpoint, treated as
+  unavailable on any change and never logged raw) and converts the Chat and Completions snapshots to used
+  percentages, keeping only snapshots that report `has_quota`; both share `quota_reset_date_utc`, the next
+  monthly billing-cycle reset. The result is pushed to `/api/copilot` on the same schedule as the other pages.
+- **Off by default.** `--copilot` enables it, `--copilot-interval` sets the refresh rate (default 300 s), and
+  the daemon host needs `gh auth login` — one authenticated quota read per poll, no model request. `README.md`
+  and `AUTHENTICATION.md` document the setup.
+- `test_quota_windows.py` covers the snapshot conversion, the `has_quota` filter, a missing reset date and
+  malformed responses.
+
 ## v1.0.0-kitt30 (2026-10-19)
 
 Show the Gemini 4 Argon limit, which is the one that runs out.
