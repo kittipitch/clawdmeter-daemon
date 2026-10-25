@@ -128,6 +128,14 @@ gh auth login
 the independent Chat and Completions allowances, both on the next monthly
 billing-cycle reset. This is a read-only GitHub request, not a model prompt.
 
+A service launched without `--copilot` reads the same setting from its config
+file: `"copilot_enabled": true` enables it, `false` (the default) keeps it off.
+The flag writes that key, so a later bare restart does not lose it — and a
+logged-in `gh` alone proves nothing while the key is still `false`. Probe the
+credential without the daemon using `gh api /copilot_internal/user` and read
+only the `quota_snapshots` percentages; the raw response carries account
+identifiers and is never logged.
+
 ### 4. Weather (no credential at all)
 
 Set the location **on the device**, in its Agenda & weather tab (lat/lon). The
