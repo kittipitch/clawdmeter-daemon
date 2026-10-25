@@ -861,6 +861,17 @@ gh auth login
 python clawdmeter_daemon.py --copilot --push-to <device>
 ```
 
+Run as a service without editing its command line instead? Set
+`"copilot_enabled": true` in the daemon's JSON config file (the same file that
+remembers `--push-to`); `--copilot` writes that key, and `--no-copilot` clears
+it, so the flag and the file agree. `copilot_interval` works the same way.
+
+If the Copilot page never appears with `gh auth login` already done, check
+that key first — a logged-in CLI is not enough while the feature is off. The
+daemon log names the two lines to expect (`Polling Copilot quota every 300s`,
+then `Copilot: {'ok': True, ...}`), and the Premium card needs daemon and
+firmware `v1.0.0-kitt32` or newer (older pairs draw Chat and Code only).
+
 The GitHub endpoint is undocumented, so unavailable or changed quota data
 leaves the page out of the carousel rather than displaying guessed values.
 
