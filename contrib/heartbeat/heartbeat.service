@@ -1,0 +1,6 @@
+[Unit]
+Description=Heartbeat ping
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/heartbeat-ping.sh
