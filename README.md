@@ -875,6 +875,55 @@ firmware `v1.0.0-kitt32` or newer (older pairs draw Chat and Code only).
 The GitHub endpoint is undocumented, so unavailable or changed quota data
 leaves the page out of the carousel rather than displaying guessed values.
 
+## Uptime monitoring (Better Stack, optional, off by default)
+
+Polls the Better Stack Uptime API for **monitors** and **heartbeats**, keeps a
+compact status payload sorted by urgency (down first, then pending, paused, up),
+and optionally pushes it to `http://<device>/api/uptime`. The status is not served
+by the daemon; it reaches the daemon log and reaches the device only via `--uptime-push`.
+
+The daemon resolves the Better Stack API token in this order:
+1. `CLAWDMETER_BETTERSTACK_KEY` environment variable (raw token in the environment).
+   This is supported but discouraged because environment variables are visible to
+   other processes on the machine.
+2. The file whose path is set in the `CLAWDMETER_BETTERSTACK_KEY_FILE` environment variable.
+   The key file (mode 600) is the recommended way. If `CLAWDMETER_BETTERSTACK_KEY_FILE` is
+   set but the file is unreadable or empty, the daemon returns an empty key and does NOT
+   fall back to the default path (an explicit path must fail loudly).
+3. The default key file path: `$XDG_CONFIG_HOME/clawdmeter/betterstack.key` if `XDG_CONFIG_HOME`
+   is set and non-empty, otherwise `~/.config/clawdmeter/betterstack.key`.
+
+The key file must contain only the token and should be set to permissions `chmod 600`.
+For security, the payload sent to the device never contains monitor or heartbeat URLs,
+as heartbeat URLs embed secret ping tokens.
+
+Pushed payloads include an `ageS` staleness field indicating the age in seconds since the
+last successful fetch from the Better Stack API (treat the data as stale when ageS grows
+beyond a few poll intervals).
+
+### Flags
+
+- `--uptime`: enable the Better Stack Uptime poller.
+- `--no-uptime`: disable the Uptime feature (overrides a remembered `--uptime`).
+- `--uptime-interval N`: seconds between refreshes (default 60, minimum 30).
+- `--uptime-push`: push status to desk device `/api/uptime`. Leave this off for
+  older firmware that lacks the `/api/uptime` endpoint.
+- `--no-uptime-push`: disable pushing Uptime status.
+- `--uptime-target NAME`: filter to specific target names (repeatable; default all).
+  Configured targets are remembered in the config file and matched against the
+  display name (first 40 characters).
+
+Example usage:
+
+```sh
+python clawdmeter_daemon.py --uptime --uptime-push --push-to <device>
+```
+
+**Monitoring a machine behind NAT or a firewall?** Nothing outside can reach it, so it has to ping out.
+[`contrib/heartbeat/`](contrib/heartbeat/README.md) is a one-minute systemd timer that hits a Better Stack
+heartbeat URL (or any dead-man's-switch service); the daemon then reads that heartbeat's status back
+through this feed. Websites need no client: add them as monitors in the Better Stack dashboard.
+
 ## Antigravity CLI quota (optional, off by default)
 
 Pushes your Google Antigravity (`agy`) account quota to
@@ -1089,6 +1138,13 @@ for the full device-side story.
                     one read-only GitHub request per poll, no model cost
 --no-copilot        disable the Copilot feature (overrides a remembered --copilot)
 --copilot-interval N  seconds between Copilot quota refreshes (default 300)
+--uptime            enable Better Stack Uptime feed -- polls monitors and
+                    heartbeats via the Better Stack API
+--no-uptime         disable the Uptime feature (overrides a remembered --uptime)
+--uptime-interval N seconds between Uptime refreshes (default 60, min 30)
+--uptime-push       push Uptime status to desk device (/api/uptime)
+--no-uptime-push    disable pushing Uptime status to desk device
+--uptime-target NAME target name to include in Uptime status (repeatable; default all)
 --antigravity       enable Antigravity CLI (`agy`) quota push -- needs
                     `agy` authenticated on this machine. UNLIKE --codex,
                     every poll fires a real cheap-model prompt -- a small
