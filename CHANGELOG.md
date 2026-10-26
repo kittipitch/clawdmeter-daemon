@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Add optional Better Stack Uptime feed (`--uptime`).** Polls monitors and heartbeats
+  from the Better Stack Uptime API, normalises statuses (up, down, paused, pending),
+  sorts down items first, never copies a monitor's or heartbeat's URL (heartbeat URLs embed a secret ping token),
+  and optionally pushes the status payload with `ageS` to `/api/uptime` (`--uptime-push`). Covered by `test_uptime.py`.
+
 ## v1.0.0-kitt32 (2026-10-25)
 
 Report the Copilot premium allowance and send a next-3-hours weather slice.

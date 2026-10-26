@@ -195,6 +195,9 @@ DEFAULT_ANTIGRAVITY_INTERVAL = 1800    # s; UNLIKE Codex, each poll fires a real
 DEFAULT_OPENROUTER_INTERVAL = 300       # s; OpenRouter is one cheap authenticated GET,
                                         # no model/token cost, so a short interval is fine.
 DEFAULT_COPILOT_INTERVAL = 300          # s; one authenticated GitHub quota read, no model request
+DEFAULT_UPTIME_INTERVAL = 60           # s; Better Stack Uptime API polling cadence (min 30s)
+BETTERSTACK_API = "https://uptime.betterstack.com/api/v2"
+UPTIME_NAME_MAX = 40   # chars kept of a target name; the device shortens further for its own card size
 
 
 # A daemon launched windowless (pythonw) or headless has no visible console, so
@@ -259,6 +262,10 @@ def load_config() -> dict:
         "weather_interval": DEFAULT_WEATHER_INTERVAL,
         "copilot_enabled": False,              # needs `gh auth login` on this machine
         "copilot_interval": DEFAULT_COPILOT_INTERVAL,
+        "uptime_enabled": False,
+        "uptime_interval": DEFAULT_UPTIME_INTERVAL,
+        "uptime_push": False,
+        "uptime_targets": [],
     }
     try:
         cfg.update(json.loads(CONFIG_PATH.read_text()))
@@ -447,6 +454,9 @@ antigravity_state = State()
 # GitHub Copilot quota feature: same generic State reuse. It uses the existing
 # GitHub CLI login on this machine; no token is read or persisted by the daemon.
 copilot_state = State()
+
+# Better Stack Uptime feed: same generic State reuse.
+uptime_state = State()
 
 
 # ---- Credential / token management ----------------------------------------
@@ -2894,6 +2904,286 @@ def copilot_push_loop(stop: threading.Event, targets_fn, interval: float) -> Non
         copilot_state.push_kick_event.clear()
 
 
+def _resolve_betterstack_key() -> str:
+    key = os.environ.get("CLAWDMETER_BETTERSTACK_KEY", "").strip()
+    if key:
+        return key
+    file_path = os.environ.get("CLAWDMETER_BETTERSTACK_KEY_FILE", "").strip()
+    if file_path:
+        try:
+            return Path(file_path).expanduser().read_text(encoding="utf-8").strip()
+        except (OSError, ValueError, RuntimeError):
+            return ""
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    try:
+        if xdg and Path(xdg).is_absolute():
+            default_path = Path(xdg) / "clawdmeter" / "betterstack.key"
+        else:
+            default_path = Path.home() / ".config" / "clawdmeter" / "betterstack.key"
+        return default_path.read_text(encoding="utf-8").strip()
+    except (OSError, ValueError, RuntimeError):
+        return ""
+
+
+_betterstack_truncated: set[str] = set()   # resources whose truncation was already logged
+
+
+def _betterstack_get(resource: str, key: str) -> dict | None:
+    url = f"{BETTERSTACK_API}/{resource}"
+    prefix = f"{BETTERSTACK_API}/"
+    params: dict | None = {"per_page": 50}
+    headers = {"Authorization": f"Bearer {key}"}
+    all_data = []
+    visited: set[str] = set()
+    pages = 0
+    while url and pages < 5:
+        visited.add(url)
+        try:
+            resp = httpx.get(url, headers=headers, params=params, timeout=15.0)
+            if resp.status_code != 200:
+                log(f"Better Stack {resource} HTTP {resp.status_code}")
+                return None
+            body = resp.json()
+        except httpx.HTTPError as e:
+            log(f"Better Stack {resource} {e.__class__.__name__}")
+            return None
+        except Exception as e:
+            log(f"Better Stack {resource} {e.__class__.__name__}")
+            return None
+
+        if not isinstance(body, dict):
+            log(f"Better Stack {resource} ValueError")
+            return None
+
+        data = body.get("data")
+        if not isinstance(data, list):
+            log(f"Better Stack {resource} ValueError")
+            return None
+
+        all_data.extend(data)
+        pages += 1
+
+        pagination = body.get("pagination")
+        next_url = None
+        if isinstance(pagination, dict):
+            next_val = pagination.get("next")
+            if isinstance(next_val, str) and next_val.startswith(prefix):
+                if next_val != url and next_val not in visited:
+                    next_url = next_val
+
+        if pages >= 5 and next_url:
+            if resource not in _betterstack_truncated:
+                _betterstack_truncated.add(resource)
+                log(f"Better Stack {resource}: page limit reached, results truncated")
+            break
+
+        url = next_url
+        params = None
+
+    else:
+        _betterstack_truncated.discard(resource)
+    return {"data": all_data}
+
+
+def parse_uptime(
+    monitors: dict | None,
+    heartbeats: dict | None,
+    targets: list[str] | None = None,
+) -> dict:
+    if monitors is None or heartbeats is None:
+        return {"ok": False}
+    if not isinstance(monitors, dict) or not isinstance(heartbeats, dict):
+        return {"ok": False}
+    monitors_data = monitors.get("data")
+    heartbeats_data = heartbeats.get("data")
+    if not isinstance(monitors_data, list) or not isinstance(heartbeats_data, list):
+        return {"ok": False}
+
+    target_filter = None
+    if targets is not None:
+        clean = [t.strip() for t in targets if isinstance(t, str) and t.strip()]
+        if clean:
+            target_filter = {t.lower() for t in clean}
+            target_filter |= {t[:UPTIME_NAME_MAX].lower() for t in clean}
+
+    status_ranks = {"down": 0, "pending": 1, "paused": 2, "up": 3}
+    kept: list[dict] = []
+
+    for default_kind, data_list in (("site", monitors_data), ("beat", heartbeats_data)):
+        for item in data_list:
+            if not isinstance(item, dict):
+                continue
+            attrs = item.get("attributes")
+            if not isinstance(attrs, dict):
+                attrs = {}
+
+            raw_name = None
+            p_name = attrs.get("pronounceable_name")
+            if isinstance(p_name, str) and p_name.strip():
+                raw_name = p_name.strip()
+            else:
+                n_name = attrs.get("name")
+                if isinstance(n_name, str) and n_name.strip():
+                    raw_name = n_name.strip()
+
+            if raw_name is None:
+                item_id = item.get("id")
+                if item_id is not None:
+                    s_id = str(item_id).strip()
+                    raw_name = s_id if s_id else "?"
+                else:
+                    raw_name = "?"
+
+            name = raw_name[:UPTIME_NAME_MAX]
+
+            if target_filter is not None and name.lower() not in target_filter:
+                continue
+
+            raw_status = attrs.get("status")
+            s = raw_status.strip().lower() if isinstance(raw_status, str) else ""
+
+            if s == "up":
+                status = "up"
+            elif s == "down":
+                status = "down"
+            elif s in ("paused", "maintenance"):
+                status = "paused"
+            else:
+                status = "pending"
+
+            kind = default_kind
+            item_type = item.get("type")
+            if item_type == "monitor":
+                kind = "site"
+            elif item_type == "heartbeat":
+                kind = "beat"
+
+            # Output per target is strictly {"name", "kind", "status"} - NEVER attributes.url
+            kept.append({
+                "name": name,
+                "kind": kind,
+                "status": status,
+            })
+
+    down_count = sum(1 for item in kept if item["status"] == "down")
+    kept.sort(key=lambda x: (status_ranks[x["status"]], x["name"].lower()))
+    capped_targets = kept[:8]
+
+    return {
+        "ok": True,
+        "down": down_count,
+        "targets": capped_targets,
+    }
+
+
+def poll_uptime(cfg_targets: list[str] | None = None) -> dict:
+    key = _resolve_betterstack_key()
+    if not key:
+        return {"ok": False}
+    monitors = _betterstack_get("monitors", key)
+    heartbeats = _betterstack_get("heartbeats", key)
+    res = parse_uptime(monitors, heartbeats, targets=cfg_targets)
+    if res.get("ok"):
+        res["ts"] = int(time.monotonic())
+    return res
+
+
+_last_uptime_summary: str | None = None
+_uptime_failing: bool = False
+_last_unmatched_targets: set[str] | None = None
+
+
+def _format_uptime_summary(payload: dict) -> str:
+    targets = payload.get("targets", [])
+    down_count = payload.get("down", 0)
+    down_names = [t["name"] for t in targets if t.get("status") == "down"]
+    target_count = len(targets)
+    t_str = f"{target_count} target" if target_count == 1 else f"{target_count} targets"
+    d_str = f"{down_count} down"
+    if down_names:
+        return f"Uptime: {t_str}, {d_str}: [{', '.join(down_names)}]"
+    return f"Uptime: {t_str}, {d_str}"
+
+
+def do_uptime_poll(targets: list[str] | None = None) -> None:
+    global _last_uptime_summary, _uptime_failing, _last_unmatched_targets
+    clean_targets = [t.strip() for t in targets if isinstance(t, str) and t.strip()] if targets is not None else None
+    payload = poll_uptime(cfg_targets=clean_targets)
+    uptime_state.set_payload(payload)
+    if payload.get("ok"):
+        if _uptime_failing:
+            _uptime_failing = False
+            log("Uptime: Better Stack recovered")
+        if "ts" not in payload:
+            payload["ts"] = int(time.monotonic())
+        summary = _format_uptime_summary(payload)
+        if summary != _last_uptime_summary:
+            _last_uptime_summary = summary
+            log(summary)
+
+        # only meaningful while the 8-target cap has not cut the list: a capped list would
+        # make valid targets look unmatched
+        if clean_targets and len(payload.get("targets", [])) < 8:
+            returned_names = {
+                t["name"].strip()[:UPTIME_NAME_MAX].lower()
+                for t in payload.get("targets", [])
+                if isinstance(t, dict) and isinstance(t.get("name"), str)
+            }
+            current_unmatched = {t for t in clean_targets if t[:UPTIME_NAME_MAX].lower() not in returned_names}
+            if current_unmatched != _last_unmatched_targets:
+                _last_unmatched_targets = current_unmatched
+                if current_unmatched:
+                    log(f"Uptime: target(s) matched nothing: {', '.join(sorted(current_unmatched))}")
+        else:
+            _last_unmatched_targets = None
+    else:
+        if not _uptime_failing:
+            _uptime_failing = True
+            log("Uptime: Better Stack unreachable, serving stale data")
+        _last_uptime_summary = None
+
+
+def uptime_poller_loop(interval: float, targets: list[str] | None = None) -> None:
+    log(f"Polling Better Stack Uptime every {interval:.0f}s")
+    while not uptime_state.stop_event.is_set():
+        try:
+            do_uptime_poll(targets)
+        except Exception as e:
+            log(f"Uptime poll: unexpected error, will retry next interval: {e}")
+        uptime_state.refresh_event.wait(interval)
+        uptime_state.refresh_event.clear()
+
+
+def _uptime_push_payload(payload: dict, now: float | int | None = None) -> dict:
+    if now is None:
+        now = time.monotonic()
+    copy = dict(payload)
+    if "ts" in copy:
+        ts = copy.pop("ts")
+        copy["ageS"] = max(0, int(now) - int(ts))
+    return copy
+
+
+def uptime_push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
+    """Push the current Uptime status to /api/uptime."""
+    log(f"HTTP Uptime push every {interval:.0f}s")
+    while not stop.is_set():
+        payload = uptime_state.get_payload()
+        urls = targets_fn()
+        if payload.get("ok") and len(payload) > 1 and urls:
+            push_payload = _uptime_push_payload(payload)
+            for url in urls:
+                uptime_url = _resolve_url_for_push(url.replace("/api/usage", "/api/uptime"))
+                try:
+                    response = httpx.post(uptime_url, json=push_payload, timeout=10.0, headers=_push_headers())
+                    if response.status_code >= 400:
+                        log(f"Uptime push {uptime_url} HTTP {response.status_code}")
+                except httpx.HTTPError as e:
+                    log(f"Uptime push {uptime_url} failed: {e}")
+        uptime_state.push_kick_event.wait(interval)
+        uptime_state.push_kick_event.clear()
+
+
 ANTIGRAVITY_PROMPT_MODEL = "gemini-3.6-flash-low"  # cheapest model on this plan's list
 ANTIGRAVITY_PORT_WAIT_S   = 90   # `agy` can stall ~58s before listening on a
                                  # DNS-less boot; must exceed that comfortably
@@ -3772,6 +4062,7 @@ def push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
                         openrouter_state.push_kick_event.set()
                         codex_state.push_kick_event.set()
                         copilot_state.push_kick_event.set()
+                        uptime_state.push_kick_event.set()
                         # Antigravity's push (re-sending its cached payload
                         # sooner) is free, so it gets kicked like the others.
                         # Its refresh_event is deliberately NOT kicked here --
@@ -3789,6 +4080,7 @@ def push_loop(stop: threading.Event, targets_fn, interval: float) -> None:
                         openrouter_state.refresh_event.set()
                         codex_state.refresh_event.set()
                         copilot_state.refresh_event.set()
+                        uptime_state.refresh_event.set()
                 except httpx.HTTPError as e:
                     log(f"Push {url} failed: {e}")
                     ok_urls.discard(url)
@@ -4515,6 +4807,18 @@ def main() -> None:
                     help="disable the Copilot feature (overrides a previously remembered --copilot)")
     ap.add_argument("--copilot-interval", type=float, default=None,
                     help=f"seconds between Copilot quota refreshes (default {DEFAULT_COPILOT_INTERVAL:.0f})")
+    ap.add_argument("--uptime", action="store_true",
+                    help="enable Better Stack Uptime feed (needs API token in env or ~/.config/clawdmeter/betterstack.key)")
+    ap.add_argument("--no-uptime", action="store_true",
+                    help="disable the Uptime feature (overrides a previously remembered --uptime)")
+    ap.add_argument("--uptime-interval", type=float, default=None,
+                    help=f"seconds between Uptime refreshes (default {DEFAULT_UPTIME_INTERVAL:.0f}, min 30)")
+    ap.add_argument("--uptime-push", action="store_true",
+                    help="push Uptime status to desk device (/api/uptime)")
+    ap.add_argument("--no-uptime-push", action="store_true",
+                    help="disable pushing Uptime status to desk device")
+    ap.add_argument("--uptime-target", action="append", dest="uptime_target", default=None,
+                    help="target name to include in Uptime status (repeatable; default all)")
     # Antigravity CLI (`agy`) quota (optional feature, off by default).
     # UNLIKE Codex, this fires a real, tiny prompt every poll -- a genuine
     # cost, not free (see poll_antigravity() for why no free path exists).
@@ -4630,6 +4934,18 @@ def main() -> None:
         cfg["copilot_enabled"] = False
     if args.copilot_interval is not None:
         cfg["copilot_interval"] = args.copilot_interval
+    if args.uptime:
+        cfg["uptime_enabled"] = True
+    if args.no_uptime:
+        cfg["uptime_enabled"] = False
+    if args.uptime_interval is not None:
+        cfg["uptime_interval"] = max(30.0, args.uptime_interval)
+    if args.uptime_push:
+        cfg["uptime_push"] = True
+    if args.no_uptime_push:
+        cfg["uptime_push"] = False
+    if args.uptime_target:
+        cfg["uptime_targets"] = args.uptime_target
     if args.antigravity:
         cfg["antigravity_enabled"] = True
     if args.no_antigravity:
@@ -4766,6 +5082,24 @@ def main() -> None:
                              daemon=True).start()
         else:
             log("Copilot enabled but no --push-to host configured - nothing to push to")
+
+    # Uptime: independent of the primary Transport too.
+    if cfg.get("uptime_enabled"):
+        if not _resolve_betterstack_key():
+            log("Uptime enabled but no Better Stack key: set CLAWDMETER_BETTERSTACK_KEY_FILE or ~/.config/clawdmeter/betterstack.key")
+        uptime_interval = max(30.0, float(cfg.get("uptime_interval", DEFAULT_UPTIME_INTERVAL)))
+        uptime_targets = cfg.get("uptime_targets") or []
+        threading.Thread(target=uptime_poller_loop, args=(uptime_interval, uptime_targets), daemon=True).start()
+        if cfg.get("uptime_push"):
+            uptime_push_targets = tuple(_static_push_urls(cfg))
+            if uptime_push_targets:
+                uptime_stop = threading.Event()
+                threading.Thread(target=uptime_push_loop,
+                                 args=(uptime_stop, lambda: uptime_push_targets,
+                                       float(cfg.get("push_interval", DEFAULT_PUSH_INTERVAL))),
+                                 daemon=True).start()
+            else:
+                log("Uptime push enabled but no --push-to host configured - nothing to push to")
 
     # Antigravity: independent of the primary Transport too, same reasoning
     # as z.ai/Codex. Real per-poll cost -- see poll_antigravity().
