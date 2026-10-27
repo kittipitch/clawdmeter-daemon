@@ -25,3 +25,6 @@ Thumbs.db
 *.orig
 *.rej
 *.old
+
+# Agent working state (Claude Code / autoharness): local only, never in this public repo
+.claude/
