@@ -1,12 +1,18 @@
 # Changelog
 
-## Unreleased
+## v1.0.0-kitt35 (2026-10-27)
 
+- **Fix the Antigravity quota on Windows.** The daemon gave every `agy` call an `SSH_CONNECTION` (a Linux keyring
+  workaround), which on Windows sent `agy` to an OAuth login prompt that timed out after 60 s, so the page stayed
+  blank although `agy` worked in PowerShell. `_agy_env()` now keeps the workaround on Linux/macOS and drops `SSH_*`
+  on Windows, where `agy` reads Credential Manager. Covered by `test_agy_env.py`.
 - **Extend Better Stack Uptime feed with incident cause and duration (`cause`, `sinceS`).**
   Each target in the `/api/uptime` payload now carries the open incident cause (sanitised,
   ASCII printable, max 40 chars) and elapsed seconds in current state (`sinceS`). An UP target
   derives `sinceS` from the latest resolved incident or resource `created_at`. If the incidents
   endpoint fails, the payload falls back cleanly with `cause` and `sinceS` as `null`.
+- **Add `CONTRIBUTING.md`:** the rule behind each platform-specific bug and the test that guards it. `test_uptime.py`
+  now also fakes `USERPROFILE`, so it passes on Windows too.
 
 ## v1.0.0-kitt34 (2026-10-27)
 
