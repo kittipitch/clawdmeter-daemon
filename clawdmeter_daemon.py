@@ -1437,6 +1437,8 @@ _translate_cache: dict[str, str] = {}
 _translate_warned_missing = False
 _translate_fail_until: dict[str, float] = {}   # text -> monotonic time to retry after
 TRANSLATE_CACHE_PATH = Path.home() / ".clawdmeter-translate-cache.json"
+TRANSLATE_RETRY_SEC = 3.0   # one retry after a refused Bing call (it refuses quick repeats)
+TRANSLATE_FAILED_LABEL = "Not translated"   # shown instead of a title the device cannot draw (fits the 16-char card)
 TRANSLATE_FAIL_BACKOFF_SEC = 300.0   # don't re-pay a 15s timeout every poll for the same title
 TRANSLATE_CALL_SPACING_SEC = 1.5     # pace real translate-shell calls -- a cold cache with
                                       # several new non-ASCII titles in one poll pass (up to
@@ -1478,17 +1480,17 @@ def _translate_to_english(text: str) -> str:
     changes, so an uncached call would re-pay that cost for no reason.
     Only successful translations are cached (mirrors the city-name cache's
     "never cache a failure" rule) so a transient failure retries next poll
-    instead of getting stuck. Falls back to the original text on any
-    failure or if `trans` isn't installed -- the device-side
-    stripNonAscii() safety net still applies either way, so this can only
-    improve on the pre-existing behavior, never break it."""
+    instead of getting stuck. On any failure, or if `trans` isn't installed,
+    it returns TRANSLATE_FAILED_LABEL ("Not translated", owner 2026-10-27):
+    the device would otherwise strip the title to leftover punctuation and
+    digits. The real title replaces it as soon as a later poll translates it."""
     global _translate_warned_missing
     if text in _translate_cache:
         return _translate_cache[text]
     now = time.monotonic()
     retry_after = _translate_fail_until.get(text)
     if retry_after is not None and now < retry_after:
-        return text   # recent failure for this exact title -- don't re-pay the timeout yet
+        return TRANSLATE_FAILED_LABEL   # recent failure for this exact title -- don't re-pay the timeout yet
     trans_bin = shutil.which("trans")
     if not trans_bin:
         if not _translate_warned_missing:
@@ -1496,7 +1498,7 @@ def _translate_to_english(text: str) -> str:
                 "non-English event titles will be stripped device-side "
                 "instead of translated")
             _translate_warned_missing = True
-        return text
+        return TRANSLATE_FAILED_LABEL
     try:
         # -e bing: translate-shell's default engine is Google's unofficial
         # web endpoint, which rate-limits by source network (confirmed live
@@ -1504,18 +1506,28 @@ def _translate_to_english(text: str) -> str:
         # "[ERROR] Rate limiting" simultaneously, so switching which host
         # runs this doesn't help). Bing's engine isn't rate-limited on the
         # same network and produces equivalent romanization.
-        result = _run(
-            [trans_bin, "-e", "bing", "-b", ":en", text],
-            capture_output=True, text=True, timeout=15.0,
-        )
-        translated = result.stdout.strip()
+        # Bing refuses a call that follows another closely (rc 1 "Something went wrong", or
+        # "Failed to extract IG"), so a failed call gets ONE retry a few seconds later.
+        translated = ""
+        for attempt in range(2):
+            if attempt:
+                time.sleep(TRANSLATE_RETRY_SEC)
+            result = _run(
+                [trans_bin, "-e", "bing", "-b", ":en", text],
+                capture_output=True, text=True, timeout=15.0,
+            )
+            translated = result.stdout.strip()
+            if "[ERROR]" in translated:   # an error message, not a title
+                translated = ""
+            if translated:
+                break
     except (subprocess.TimeoutExpired, OSError) as e:
         log(f"Calendar: translate-shell failed for {text!r}: {e}")
         translated = ""
     time.sleep(TRANSLATE_CALL_SPACING_SEC)   # pace real calls, see constant's comment above
     if not translated:
         _translate_fail_until[text] = now + TRANSLATE_FAIL_BACKOFF_SEC
-        return text
+        return TRANSLATE_FAILED_LABEL
     _translate_cache[text] = translated
     _save_translate_cache(_translate_cache)
     return translated
