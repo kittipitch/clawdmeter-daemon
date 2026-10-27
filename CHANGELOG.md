@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.0.0-kitt34 (2026-10-27)
 
 - **Fix black console windows flashing on Windows.** Seven child-process calls (`agy` quota and probe,
   `agy --version`, `codex app-server`, `trans`, `lsof`, `ping`) bypassed the `CREATE_NO_WINDOW` helper, so the
