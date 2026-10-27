@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Translate non-English calendar titles on native Windows too.** `contrib/translate-shell-windows/install-trans.bat`
+  installs translate-shell using Git for Windows' `bash` and `gawk`, with a `trans.cmd` wrapper and a `hexdump` shim.
+  README lists the macOS, Linux and Windows steps.
+
 ## v1.0.0-kitt35 (2026-10-27)
 
 - **Fix the Antigravity quota on Windows.** The daemon gave every `agy` call an `SSH_CONNECTION` (a Linux keyring

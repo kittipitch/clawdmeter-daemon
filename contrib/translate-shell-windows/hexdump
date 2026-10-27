@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Minimal hexdump for translate-shell on Git for Windows (which ships od, not hexdump).
+# Supports only the two formats trans uses: -e'1/1 "%03u" " "' and -e'1/1 "%02X" " "'.
+case "$*" in
+  *%03u*) od -An -v -tu1 | awk '{for(i=1;i<=NF;i++) printf "%03d ", $i}' ;;
+  *%02X*) od -An -v -tx1 | awk '{for(i=1;i<=NF;i++) printf "%s ", toupper($i)}' ;;
+  *) echo "hexdump shim: unsupported format: $*" >&2; exit 2 ;;
+esac
