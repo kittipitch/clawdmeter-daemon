@@ -17,6 +17,10 @@ except ModuleNotFoundError:
     sys.modules.setdefault("aqi", types.ModuleType("aqi"))
     module = importlib.import_module("clawdmeter_daemon")
 
+# Keep this test's log lines out of the real ~/.clawdmeter-daemon.log (CONTRIBUTING.md rule 3).
+import pathlib as _pathlib, tempfile as _tempfile  # noqa: E402
+module.LOG_PATH = _pathlib.Path(_tempfile.mkdtemp()) / "test.log"
+
 _parse_reset_credits = module._parse_reset_credits
 
 now = datetime(2026, 9, 24, 12, 0)
