@@ -3539,12 +3539,28 @@ def parse_agy_quota(doc, now: float | None = None) -> dict:
     return payload
 
 
+def _agy_env() -> dict:
+    """Environment for an agy subprocess.
+
+    Linux/macOS: set SSH_CONNECTION so agy skips the OS keyring and reads its token file (see
+    poll_antigravity(): a locked keyring stalls 5 s + 10 s per run). Windows is the opposite:
+    agy keeps its login in Credential Manager and writes no token file, so an SSH_CONNECTION
+    sends it to a login prompt that times out after 60 s. There, drop any inherited SSH_*
+    variables (a daemon started from an ssh shell would carry them)."""
+    env = dict(os.environ)
+    if sys.platform == "win32":
+        for k in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"):
+            env.pop(k, None)
+    else:
+        env.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")
+    return env
+
+
 def _poll_antigravity_quota() -> dict:
     agy_bin = shutil.which("agy")
     if not agy_bin:
         return {"ok": False}
-    env = dict(os.environ)
-    env.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")  # same reason as poll_antigravity()
+    env = _agy_env()   # keyring vs token file, per OS: see _agy_env()
     try:
         r = _run([agy_bin, "-p", "/quota", "--output-format", "json"],
                            capture_output=True, text=True, timeout=60, env=env)
@@ -3675,8 +3691,8 @@ def poll_antigravity(_retry: bool = True) -> dict:
     # The plaintext token file is what agy falls through to anyway.
     # This is ALSO why the same command works when you ssh in and fails as a
     # unit: ssh sets SSH_CONNECTION. It was never a permissions difference.
-    agy_env = dict(os.environ)
-    agy_env.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")
+    # Windows is the exception (Credential Manager, no token file): _agy_env() handles both.
+    agy_env = _agy_env()
     try:
         p = _popen(
             [agy_bin, "-p", "reply with just the word pong, no tools",
