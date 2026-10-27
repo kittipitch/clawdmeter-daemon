@@ -695,7 +695,12 @@ Install it:
 | macOS | `brew install translate-shell` |
 | Debian/Ubuntu/Raspberry Pi OS | `sudo apt install translate-shell` |
 | Other Linux (no package manager) | Clone and build (requires `gawk`):<br>`git clone --depth 1 https://github.com/soimort/translate-shell.git && cd translate-shell && gawk -f build.awk build && cp build/trans ~/.local/bin/trans` |
-| Windows | Only if the **whole daemon** runs under WSL — a `trans` installed in WSL is invisible to a native-Windows daemon. Otherwise skip it (titles are stripped device-side instead) |
+| Windows (native) | Install [Git for Windows](https://git-scm.com) (it brings `bash` and `gawk`), then run `contrib\translate-shell-windows\install-trans.bat`. It downloads translate-shell into `%USERPROFILE%\.local\bin`, adds a `trans.cmd` wrapper plus a small `hexdump` shim (Git for Windows has none), and test-translates one phrase. Make sure that folder is on your user `PATH`, then restart the tray daemon. A `trans` installed inside WSL is invisible to a native-Windows daemon. |
+
+Check it worked, on any system: `trans -e bing -b :en "สวัสดี"` should print an English word, and the daemon log shows
+`Calendar: N upcoming, next = '<English title>'` on its next calendar poll (every 5 minutes; no restart needed when
+`trans` was already on the daemon's `PATH`). Bing occasionally answers `Failed to extract IG`; that is a one-off: the
+daemon retries a failed title on a later poll.
 
 **Nothing to configure — no flag, no env var.** If `trans` isn't found on
 `PATH`, the daemon logs one line the first time it would've needed it

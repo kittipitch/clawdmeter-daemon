@@ -5,3 +5,5 @@
 *.bat  text eol=crlf
 *.md   text
 *.txt  text
+*.cmd  text eol=crlf
+contrib/translate-shell-windows/hexdump text eol=lf
