@@ -16,6 +16,10 @@ except ModuleNotFoundError:
     sys.modules.setdefault("aqi", types.ModuleType("aqi"))
     module = importlib.import_module("clawdmeter_daemon")
 
+# Keep this test's log lines out of the real ~/.clawdmeter-daemon.log (CONTRIBUTING.md rule 3).
+import pathlib as _pathlib, tempfile as _tempfile  # noqa: E402
+module.LOG_PATH = _pathlib.Path(_tempfile.mkdtemp()) / "test.log"
+
 parse = module.parse_agy_quota
 NOW = 1_800_000_000.0
 IN = lambda mins: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW + mins * 60))

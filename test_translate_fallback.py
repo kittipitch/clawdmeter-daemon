@@ -15,6 +15,10 @@ except ModuleNotFoundError:
     sys.modules.setdefault("aqi", types.ModuleType("aqi"))
     module = importlib.import_module("clawdmeter_daemon")
 
+# Keep this test's log lines out of the real ~/.clawdmeter-daemon.log (CONTRIBUTING.md rule 3).
+import pathlib as _pathlib, tempfile as _tempfile  # noqa: E402
+module.LOG_PATH = _pathlib.Path(_tempfile.mkdtemp()) / "test.log"
+
 module._save_translate_cache = lambda cache: None
 module.TRANSLATE_CALL_SPACING_SEC = 0
 module.TRANSLATE_RETRY_SEC = 0

@@ -38,7 +38,9 @@ drops any `SSH_*` variables (a daemon started from an ssh shell would otherwise 
 **Bug:** a test redirected `HOME` to a temporary folder and passed on Linux and macOS, but on Windows `Path.home()`
 reads `USERPROFILE`, so the test read the real home folder and failed. The code was right; the fixture was not.
 
-**Rule:** a test that fakes the home directory sets both `HOME` and `USERPROFILE`.
+**Rule:** a test that fakes the home directory sets both `HOME` and `USERPROFILE`. Every test also points
+`module.LOG_PATH` at a temporary file: the daemon's `log()` otherwise appends test noise (fake timeouts) to the
+user's real `~/.clawdmeter-daemon.log`, where it reads like a real failure.
 
 **Guard:** `test_uptime.py` (case 22) runs green on Windows only with both set.
 

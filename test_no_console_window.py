@@ -20,6 +20,10 @@ except ModuleNotFoundError:
     sys.modules.setdefault("aqi", types.ModuleType("aqi"))
     module = importlib.import_module("clawdmeter_daemon")
 
+# Keep this test's log lines out of the real ~/.clawdmeter-daemon.log (CONTRIBUTING.md rule 3).
+import pathlib as _pathlib, tempfile as _tempfile  # noqa: E402
+module.LOG_PATH = _pathlib.Path(_tempfile.mkdtemp()) / "test.log"
+
 # 1. No spawn bypasses the helpers (the only direct calls are inside them).
 src = Path(module.__file__).read_text(encoding="utf-8")
 direct = re.findall(r"subprocess\.(?:run|Popen|call|check_call|check_output)\(|os\.(?:system|popen)\(", src)
