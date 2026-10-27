@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Untranslatable titles read "Not translated".** A non-English calendar title that cannot be translated (no `trans`, or
+  translate-shell failing) used to reach the device untranslated and get stripped to leftover digits and punctuation.
+  It now shows "Not translated" until a later poll translates it. A refused Bing call (it refuses quick repeats) is
+  retried once after 3 s, and an `[ERROR]` line is never taken as a title. Covered by `test_translate_fallback.py`.
 - **Translate non-English calendar titles on native Windows too.** `contrib/translate-shell-windows/install-trans.bat`
   installs translate-shell using Git for Windows' `bash` and `gawk`, with a `trans.cmd` wrapper and a `hexdump` shim.
   README lists the macOS, Linux and Windows steps.
