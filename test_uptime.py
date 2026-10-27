@@ -593,6 +593,7 @@ try:
     os.environ.pop("CLAWDMETER_BETTERSTACK_KEY_FILE", None)
     with tempfile.TemporaryDirectory() as home:
         os.environ["HOME"] = home
+        os.environ["USERPROFILE"] = home   # Path.home() reads USERPROFILE on Windows, not HOME
         os.environ["XDG_CONFIG_HOME"] = "relative/dir"
         rel = Path("relative/dir/clawdmeter/betterstack.key")
         assert not rel.exists()

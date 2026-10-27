@@ -226,6 +226,8 @@ def log(msg: str) -> None:
 
 # Run a child process without flashing a console window on Windows (important when
 # launched via pythonw — otherwise spawning `claude` pops a visible window).
+# EVERY spawn goes through _run()/_popen(); never call subprocess/os.system directly
+# (CONTRIBUTING.md rule 1, guarded by test_no_console_window.py). agy also needs env=_agy_env() (rule 2).
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
 
 

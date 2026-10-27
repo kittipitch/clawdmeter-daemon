@@ -1225,6 +1225,9 @@ z.ai-side change, that's why.
 
 ## Troubleshooting
 
+> Changing the code? Read [CONTRIBUTING.md](CONTRIBUTING.md) first: each rule there fixed a platform-specific bug and has a test that guards it.
+
+
 - **No tray icon appears.** First check `~/.clawdmeter-daemon.log`. If it says
   `pystray/Pillow not installed - running headless`, the daemon is running under a
   Python that lacks the tray deps (a launcher resolved a different interpreter than
