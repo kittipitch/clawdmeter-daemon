@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.0.0-kitt36 (2026-10-27)
 
 - **Untranslatable titles read "Not translated".** A non-English calendar title that cannot be translated (no `trans`, or
   translate-shell failing) used to reach the device untranslated and get stripped to leftover digits and punctuation.
@@ -9,6 +9,8 @@
 - **Translate non-English calendar titles on native Windows too.** `contrib/translate-shell-windows/install-trans.bat`
   installs translate-shell using Git for Windows' `bash` and `gawk`, with a `trans.cmd` wrapper and a `hexdump` shim.
   README lists the macOS, Linux and Windows steps.
+
+- **Tests no longer write into the real daemon log** (`~/.clawdmeter-daemon.log`); each test logs to a temp file.
 
 ## v1.0.0-kitt35 (2026-10-27)
 
