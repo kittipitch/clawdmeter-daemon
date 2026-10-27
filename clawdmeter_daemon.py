@@ -235,6 +235,12 @@ def _run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
+def _popen(cmd, **kw):
+    if _NO_WINDOW:
+        kw["creationflags"] = kw.get("creationflags", 0) | _NO_WINDOW
+    return subprocess.Popen(cmd, **kw)
+
+
 # Spawning Claude Code is a last-resort token refresh; never do it more than once
 # per this many seconds, so a failing direct refresh can't pop it every poll.
 _CLAUDE_REFRESH_COOLDOWN = 900
@@ -1496,7 +1502,7 @@ def _translate_to_english(text: str) -> str:
         # "[ERROR] Rate limiting" simultaneously, so switching which host
         # runs this doesn't help). Bing's engine isn't rate-limited on the
         # same network and produces equivalent romanization.
-        result = subprocess.run(
+        result = _run(
             [trans_bin, "-e", "bing", "-b", ":en", text],
             capture_output=True, text=True, timeout=15.0,
         )
@@ -2553,7 +2559,7 @@ def _codex_rpc_call() -> dict | None:
             "an interactive login shell's)")
         return None
     try:
-        p = subprocess.Popen(
+        p = _popen(
             [codex_bin, "-s", "read-only", "-a", "never", "app-server"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, bufsize=1,
@@ -3203,7 +3209,7 @@ def _antigravity_find_ports(pid: int, deadline: float) -> list[int]:
         return []
     while time.time() < deadline:
         try:
-            r = subprocess.run(
+            r = _run(
                 [lsof_bin, "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", str(pid)],
                 capture_output=True, text=True, timeout=3,
             )
@@ -3308,7 +3314,7 @@ def _agy_version():
     if not agy_bin:
         return None
     try:
-        out = subprocess.run([agy_bin, "--version"], capture_output=True, text=True, timeout=15).stdout
+        out = _run([agy_bin, "--version"], capture_output=True, text=True, timeout=15).stdout
     except (OSError, subprocess.TimeoutExpired):
         return None
     m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
@@ -3420,7 +3426,7 @@ def _poll_antigravity_quota() -> dict:
     env = dict(os.environ)
     env.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")  # same reason as poll_antigravity()
     try:
-        r = subprocess.run([agy_bin, "-p", "/quota", "--output-format", "json"],
+        r = _run([agy_bin, "-p", "/quota", "--output-format", "json"],
                            capture_output=True, text=True, timeout=60, env=env)
         doc = json.loads(r.stdout)
     except (OSError, subprocess.TimeoutExpired, ValueError) as e:
@@ -3552,7 +3558,7 @@ def poll_antigravity(_retry: bool = True) -> dict:
     agy_env = dict(os.environ)
     agy_env.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")
     try:
-        p = subprocess.Popen(
+        p = _popen(
             [agy_bin, "-p", "reply with just the word pong, no tools",
              "--model", ANTIGRAVITY_PROMPT_MODEL],
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
@@ -3887,7 +3893,7 @@ def _resolve_via_ping(host: str):
     if sys.platform != "darwin":
         return None
     try:
-        out = subprocess.run(["ping", "-c", "1", host],
+        out = _run(["ping", "-c", "1", host],
                               capture_output=True, text=True, timeout=3)
         m = re.search(r"\((\d+\.\d+\.\d+\.\d+)\)", out.stdout)
         return m.group(1) if m else None

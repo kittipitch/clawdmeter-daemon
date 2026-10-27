@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fix black console windows flashing on Windows.** Seven child-process calls (`agy` quota and probe,
+  `agy --version`, `codex app-server`, `trans`, `lsof`, `ping`) bypassed the `CREATE_NO_WINDOW` helper, so the
+  pythonw tray daemon popped a console on every poll. All spawns now go through `_run()`/`_popen()`;
+  `test_no_console_window.py` fails if a direct `subprocess` call comes back.
 - **Add optional Better Stack Uptime feed (`--uptime`).** Polls monitors and heartbeats
   from the Better Stack Uptime API, normalises statuses (up, down, paused, pending),
   sorts down items first, never copies a monitor's or heartbeat's URL (heartbeat URLs embed a secret ping token),
