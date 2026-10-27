@@ -140,7 +140,7 @@ dumped = json.dumps(res_secret)
 assert "SECRETTOKEN123" not in dumped
 assert "leak@example.com" not in dumped
 assert all("url" not in t for t in res_secret["targets"])
-assert res_secret["targets"] == [{"name": "backup-runner", "kind": "beat", "status": "up"}]
+assert res_secret["targets"] == [{"name": "backup-runner", "kind": "beat", "status": "up", "sinceS": None, "cause": None}]
 
 
 # --- 9. Key resolution order -------------------------------------------------
@@ -618,14 +618,398 @@ finally:
 
 # --- 24. Real regression: two 27-char names sharing their first 24 chars stay distinct
 cmu = {"data": [
-    {"id": "1", "type": "monitor", "attributes": {"pronounceable_name": "cs.science.cmu.ac.th/gdr111", "status": "up"}},
-    {"id": "2", "type": "monitor", "attributes": {"pronounceable_name": "cs.science.cmu.ac.th/gdrbws", "status": "down"}},
+    {"id": "1", "type": "monitor", "attributes": {"pronounceable_name": "status.example.org/gdr111", "status": "up"}},
+    {"id": "2", "type": "monitor", "attributes": {"pronounceable_name": "status.example.org/gdrbws", "status": "down"}},
 ]}
 both = module.parse_uptime(cmu, {"data": []})
-assert [t["name"] for t in both["targets"]] == ["cs.science.cmu.ac.th/gdrbws", "cs.science.cmu.ac.th/gdr111"], both
+assert [t["name"] for t in both["targets"]] == ["status.example.org/gdrbws", "status.example.org/gdr111"], both
 assert len({t["name"] for t in both["targets"]}) == 2, "names must stay distinct"
-only = module.parse_uptime(cmu, {"data": []}, targets=["cs.science.cmu.ac.th/gdr111"])
-assert [t["name"] for t in only["targets"]] == ["cs.science.cmu.ac.th/gdr111"], "filter must pick exactly one"
+only = module.parse_uptime(cmu, {"data": []}, targets=["status.example.org/gdr111"])
+assert [t["name"] for t in only["targets"]] == ["status.example.org/gdr111"], "filter must pick exactly one"
 assert only["down"] == 0
+
+# --- 25. DOWN target with open incident: cause and sinceS -------------------
+ref_now = "2026-10-27T14:00:00Z"
+m_down = {
+    "data": [
+        {
+            "id": "m1",
+            "type": "monitor",
+            "attributes": {"pronounceable_name": "site-a", "status": "down", "created_at": "2026-10-01T00:00:00Z"},
+        }
+    ]
+}
+hb_down = {
+    "data": [
+        {
+            "id": "h1",
+            "type": "heartbeat",
+            "attributes": {"name": "beat-a", "status": "down", "created_at": "2026-10-01T00:00:00Z"},
+        }
+    ]
+}
+incidents_down = {
+    "data": [
+        {
+            "id": "inc-1",
+            "type": "incident",
+            "attributes": {
+                "name": "Synthetic incident 1",
+                "cause": "Status 502",
+                "started_at": "2026-10-27T13:44:00Z",
+                "resolved_at": None,
+                "status": "Started",
+            },
+            "relationships": {"monitor": {"data": {"id": "m1", "type": "monitor"}}},
+        },
+        {
+            "id": "inc-2",
+            "type": "incident",
+            "attributes": {
+                "name": "Synthetic incident 2",
+                "cause": "Missed heartbeat",
+                "started_at": "2026-10-27T13:30:00Z",
+                "resolved_at": None,
+                "status": "Started",
+            },
+            "relationships": {"heartbeat": {"data": {"id": "h1", "type": "heartbeat"}}},
+        },
+    ]
+}
+res_down = module.parse_uptime(m_down, hb_down, incidents=incidents_down, now=ref_now)
+assert res_down["ok"] is True
+assert res_down["down"] == 2
+targets_by_name = {t["name"]: t for t in res_down["targets"]}
+assert targets_by_name["site-a"]["status"] == "down"
+assert targets_by_name["site-a"]["cause"] == "Status 502"
+assert targets_by_name["site-a"]["sinceS"] == 960  # 14:00:00 - 13:44:00 = 16m = 960s
+assert targets_by_name["beat-a"]["status"] == "down"
+assert targets_by_name["beat-a"]["cause"] == "Missed heartbeat"
+assert targets_by_name["beat-a"]["sinceS"] == 1800  # 14:00:00 - 13:30:00 = 30m = 1800s
+
+# DOWN target with NO open incident found -> cause null, sinceS null
+incidents_empty = {"data": []}
+res_down_no_inc = module.parse_uptime(m_down, {"data": []}, incidents=incidents_empty, now=ref_now)
+assert res_down_no_inc["targets"][0]["status"] == "down"
+assert res_down_no_inc["targets"][0]["cause"] is None
+assert res_down_no_inc["targets"][0]["sinceS"] is None
+
+
+# --- 26. UP target after a resolved incident: cause null, sinceS from resolved_at
+m_up = {
+    "data": [
+        {
+            "id": "m2",
+            "type": "monitor",
+            "attributes": {"pronounceable_name": "site-b", "status": "up", "created_at": "2026-10-01T00:00:00Z"},
+        }
+    ]
+}
+incidents_resolved = {
+    "data": [
+        {
+            "id": "inc-res-1",
+            "type": "incident",
+            "attributes": {
+                "name": "Recovered incident",
+                "cause": "Status 500",
+                "started_at": "2026-10-27T11:00:00Z",
+                "resolved_at": "2026-10-27T11:43:00Z",
+                "status": "Resolved",
+            },
+            "relationships": {"monitor": {"data": {"id": "m2", "type": "monitor"}}},
+        },
+        {
+            # Older resolved incident for the same monitor (newest-first ordering)
+            "id": "inc-res-old",
+            "type": "incident",
+            "attributes": {
+                "name": "Older incident",
+                "cause": "Connection timeout",
+                "started_at": "2026-10-26T10:00:00Z",
+                "resolved_at": "2026-10-26T10:30:00Z",
+                "status": "Resolved",
+            },
+            "relationships": {"monitor": {"data": {"id": "m2", "type": "monitor"}}},
+        },
+    ]
+}
+res_up_resolved = module.parse_uptime(m_up, {"data": []}, incidents=incidents_resolved, now=ref_now)
+assert res_up_resolved["ok"] is True
+assert res_up_resolved["targets"][0]["status"] == "up"
+assert res_up_resolved["targets"][0]["cause"] is None
+# 14:00:00 - 11:43:00 = 2h 17m = 8220s
+assert res_up_resolved["targets"][0]["sinceS"] == 8220
+
+
+# --- 27. UP target with no incident: sinceS from created_at or null --------
+m_up_created = {
+    "data": [
+        {
+            "id": "m3",
+            "type": "monitor",
+            "attributes": {"pronounceable_name": "site-c", "status": "up", "created_at": "2026-10-27T12:00:00Z"},
+        },
+        {
+            "id": "m4",
+            "type": "monitor",
+            "attributes": {"pronounceable_name": "site-d", "status": "up"},  # no created_at
+        },
+    ]
+}
+res_up_created = module.parse_uptime(m_up_created, {"data": []}, incidents={"data": []}, now=ref_now)
+assert res_up_created["ok"] is True
+targets_c = {t["name"]: t for t in res_up_created["targets"]}
+# 14:00:00 - 12:00:00 = 2h = 7200s
+assert targets_c["site-c"]["cause"] is None
+assert targets_c["site-c"]["sinceS"] == 7200
+# m4 has neither resolved incident nor created_at -> null
+assert targets_c["site-d"]["cause"] is None
+assert targets_c["site-d"]["sinceS"] is None
+
+# Case where created_at is more recent than an ancient resolved incident: max(resolved_at, created_at)
+incidents_ancient = {
+    "data": [
+        {
+            "id": "inc-anc",
+            "type": "incident",
+            "attributes": {
+                "name": "Ancient incident",
+                "cause": "Ancient",
+                "started_at": "2026-10-27T08:00:00Z",
+                "resolved_at": "2026-10-27T08:30:00Z",
+            },
+            "relationships": {"monitor": {"data": {"id": "m3", "type": "monitor"}}},
+        }
+    ]
+}
+res_up_max = module.parse_uptime(m_up_created, {"data": []}, incidents=incidents_ancient, now=ref_now)
+# created_at is 12:00:00, resolved_at is 08:30:00 -> max is 12:00:00 -> sinceS is 7200
+assert res_up_max["targets"][0]["sinceS"] == 7200
+
+
+# --- 28. Paused and pending targets: cause null, sinceS null ----------------
+m_paused_pending = {
+    "data": [
+        {
+            "id": "m5",
+            "type": "monitor",
+            "attributes": {"pronounceable_name": "site-e", "status": "paused", "created_at": "2026-10-01T00:00:00Z"},
+        },
+        {
+            "id": "m6",
+            "type": "monitor",
+            "attributes": {"pronounceable_name": "site-f", "status": "maintenance", "created_at": "2026-10-01T00:00:00Z"},
+        },
+        {
+            "id": "m7",
+            "type": "monitor",
+            "attributes": {"pronounceable_name": "site-g", "status": "validating", "created_at": "2026-10-01T00:00:00Z"},
+        },
+    ]
+}
+incidents_mixed = {
+    "data": [
+        {
+            "id": "inc-5",
+            "type": "incident",
+            "attributes": {"cause": "Should be ignored", "started_at": "2026-10-27T13:00:00Z", "resolved_at": None},
+            "relationships": {"monitor": {"data": {"id": "m5", "type": "monitor"}}},
+        }
+    ]
+}
+res_pp = module.parse_uptime(m_paused_pending, {"data": []}, incidents=incidents_mixed, now=ref_now)
+for t in res_pp["targets"]:
+    assert t["status"] in ("paused", "pending")
+    assert t["cause"] is None, f"{t['name']} cause must be null"
+    assert t["sinceS"] is None, f"{t['name']} sinceS must be null"
+
+
+# --- 29. Incidents call failing: feed still works with cause/sinceS null ----
+m_mixed = {
+    "data": [
+        {"id": "m1", "type": "monitor", "attributes": {"pronounceable_name": "site-down", "status": "down"}},
+        {"id": "m2", "type": "monitor", "attributes": {"pronounceable_name": "site-up", "status": "up", "created_at": "2026-10-01T00:00:00Z"}},
+    ]
+}
+# incidents=None simulates call failure
+res_fail = module.parse_uptime(m_mixed, {"data": []}, incidents=None, now=ref_now)
+assert res_fail["ok"] is True
+assert res_fail["down"] == 1
+assert len(res_fail["targets"]) == 2
+for t in res_fail["targets"]:
+    assert t["cause"] is None
+    assert t["sinceS"] is None
+
+# In poll_uptime when _betterstack_get("incidents", ...) returns None:
+orig_betterstack_get = module._betterstack_get
+orig_resolve_key = module._resolve_betterstack_key
+try:
+    module._resolve_betterstack_key = lambda: "dummy-key"
+    def fake_get_inc_fail(resource, key):
+        if resource == "monitors":
+            return m_mixed
+        if resource == "heartbeats":
+            return {"data": []}
+        if resource == "incidents":
+            return None  # HTTP error / failure
+        return None
+    module._betterstack_get = fake_get_inc_fail
+    res_poll_inc_fail = module.poll_uptime()
+    assert res_poll_inc_fail["ok"] is True
+    assert res_poll_inc_fail["down"] == 1
+    assert all(t["cause"] is None for t in res_poll_inc_fail["targets"])
+    assert all(t["sinceS"] is None for t in res_poll_inc_fail["targets"])
+finally:
+    module._betterstack_get = orig_betterstack_get
+    module._resolve_betterstack_key = orig_resolve_key
+
+
+# --- 30. Cause sanitising: printable ASCII, whitespace collapse, 40 cap, non-negative sinceS
+# Helper direct unit tests
+assert module._sanitise_cause("Missed heartbeat") == "Missed heartbeat"
+assert module._sanitise_cause("  Status \n\t  502  ") == "Status 502"
+assert module._sanitise_cause("Server error: \x00\x08\x1b[31mBad Gateway") == "Server error: [31mBad Gateway"
+assert module._sanitise_cause("Non-ASCII \U0001f525 emoji \xe9") == "Non-ASCII emoji"
+assert module._sanitise_cause("a" * 60) == "a" * 40
+assert len(module._sanitise_cause("a" * 60)) == 40
+assert module._sanitise_cause("") is None
+assert module._sanitise_cause("   \t\n  ") is None
+assert module._sanitise_cause("\x00\x01\x02") is None
+assert module._sanitise_cause("\U0001f525\U0001f525\U0001f525") is None
+assert module._sanitise_cause(None) is None
+
+# End-to-end via parse_uptime with future timestamp (sinceS never negative)
+m_future = {
+    "data": [
+        {"id": "mf", "type": "monitor", "attributes": {"pronounceable_name": "site-future", "status": "down"}}
+    ]
+}
+inc_future = {
+    "data": [
+        {
+            "id": "inc-fut",
+            "type": "incident",
+            "attributes": {
+                "cause": "  Error  with   extra   spaces \t\n and \U0001f525  ",
+                "started_at": "2026-10-27T14:00:10Z",  # 10s in the future relative to ref_now
+                "resolved_at": None,
+            },
+            "relationships": {"monitor": {"data": {"id": "mf", "type": "monitor"}}},
+        }
+    ]
+}
+res_future = module.parse_uptime(m_future, {"data": []}, incidents=inc_future, now=ref_now)
+assert res_future["targets"][0]["cause"] == "Error with extra spaces and"
+assert res_future["targets"][0]["sinceS"] == 0, "sinceS must never be negative"
+
+
+# --- 31. No incident URL or internal fields leak into the payload ------------
+m_leak_check = {
+    "data": [
+        {
+            "id": "m-leak",
+            "type": "monitor",
+            "attributes": {
+                "pronounceable_name": "site-leak-check",
+                "status": "down",
+                "url": "https://secret.monitor.example.com",
+            },
+        }
+    ]
+}
+inc_leak = {
+    "data": [
+        {
+            "id": "inc-leak-id",
+            "type": "incident",
+            "attributes": {
+                "name": "Incident Secret Leak Test",
+                "cause": "Status 502",
+                "started_at": "2026-10-27T13:50:00Z",
+                "resolved_at": None,
+                "status": "Started",
+                "url": "https://uptime.betterstack.com/incidents/SECRET-INCIDENT-URL-9999",
+                "response_url": "https://uptime.betterstack.com/incidents/SECRET-RESPONSE-URL-8888",
+                "screenshot_url": "https://uptime.betterstack.com/incidents/SECRET-SCREENSHOT-URL-7777",
+                "extra_private_field": "SECRET-PRIVATE-FIELD-VALUE",
+            },
+            "relationships": {"monitor": {"data": {"id": "m-leak", "type": "monitor"}}},
+        }
+    ]
+}
+res_leak = module.parse_uptime(m_leak_check, {"data": []}, incidents=inc_leak, now=ref_now)
+dumped_payload = json.dumps(res_leak)
+assert "SECRET-INCIDENT-URL-9999" not in dumped_payload
+assert "SECRET-RESPONSE-URL-8888" not in dumped_payload
+assert "SECRET-SCREENSHOT-URL-7777" not in dumped_payload
+assert "SECRET-PRIVATE-FIELD-VALUE" not in dumped_payload
+assert "secret.monitor.example.com" not in dumped_payload
+
+# Verify each target dict strictly contains only the allowed public keys
+for target in res_leak["targets"]:
+    assert set(target.keys()) == {"name", "kind", "status", "sinceS", "cause"}
+
+
+# --- 32. poll_uptime requests incidents with 1-page cap and handles truncation
+captured_calls = []
+captured_logs = []
+orig_log = module.log
+module.log = lambda msg: captured_logs.append(str(msg))
+orig_betterstack_get = module._betterstack_get
+orig_resolve_key = module._resolve_betterstack_key
+
+try:
+    module._resolve_betterstack_key = lambda: "dummy-key"
+
+    def fake_get_accounting(resource, key):
+        captured_calls.append(resource)
+        if resource == "monitors":
+            return {"data": [{"id": "m1", "type": "monitor", "attributes": {"name": "site-a", "status": "up"}}]}
+        if resource == "heartbeats":
+            return {"data": []}
+        if resource == "incidents":
+            return {"data": []}
+        return None
+
+    module._betterstack_get = fake_get_accounting
+    res_account = module.poll_uptime()
+    assert res_account["ok"] is True
+    # Verify exactly one request for monitors, one for heartbeats, one for incidents
+    assert captured_calls == ["monitors", "heartbeats", "incidents"], captured_calls
+
+    # Verify _betterstack_get default max_pages for incidents is 1 with truncation logging
+    orig_httpx_get = module.httpx.get
+    try:
+        class _IncResponse:
+            status_code = 200
+            def __init__(self, page):
+                self._page = page
+            def json(self):
+                return {
+                    "data": [{"id": f"inc-{self._page}"}],
+                    "pagination": {"next": f"{module.BETTERSTACK_API}/incidents?page={self._page + 1}"},
+                }
+
+        inc_calls = []
+        def fake_httpx_inc(url, headers=None, params=None, timeout=None):
+            inc_calls.append(url)
+            page = 1 if "page=" not in str(url) else int(str(url).split("page=")[-1])
+            return _IncResponse(page)
+
+        module.httpx.get = fake_httpx_inc
+        module._betterstack_get = orig_betterstack_get
+        module._betterstack_truncated.clear()
+
+        res_inc_get = module._betterstack_get("incidents", "dummy-key")
+        assert len(inc_calls) == 1, "incidents must only fetch 1 page"
+        assert len(res_inc_get["data"]) == 1
+        assert any("Better Stack incidents: page limit reached, results truncated" in l for l in captured_logs)
+    finally:
+        module.httpx.get = orig_httpx_get
+finally:
+    module.log = orig_log
+    module._betterstack_get = orig_betterstack_get
+    module._resolve_betterstack_key = orig_resolve_key
 
 print("ok")

@@ -901,6 +901,32 @@ Pushed payloads include an `ageS` staleness field indicating the age in seconds 
 last successful fetch from the Better Stack API (treat the data as stale when ageS grows
 beyond a few poll intervals).
 
+### Payload contract (`/api/uptime`)
+
+```json
+{
+  "ok": true,
+  "down": 0,
+  "targets": [
+    {
+      "name": "status.example.org/gdr111",
+      "kind": "site",
+      "status": "up",
+      "sinceS": 6780,
+      "cause": null
+    }
+  ],
+  "ageS": 20
+}
+```
+
+Each target carries:
+- `name`: display name (up to 40 characters)
+- `kind`: `"site"` (monitor) or `"beat"` (heartbeat)
+- `status`: `"up"`, `"down"`, `"paused"`, or `"pending"`
+- `cause`: short sanitised text of the OPEN incident (`"Missed heartbeat"`, `"Status 502"`, ...) or `null`
+- `sinceS`: integer seconds the target has been in its current state, or `null`
+
 ### Flags
 
 - `--uptime`: enable the Better Stack Uptime poller.

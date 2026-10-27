@@ -2934,7 +2934,9 @@ def _resolve_betterstack_key() -> str:
 _betterstack_truncated: set[str] = set()   # resources whose truncation was already logged
 
 
-def _betterstack_get(resource: str, key: str) -> dict | None:
+def _betterstack_get(resource: str, key: str, max_pages: int | None = None) -> dict | None:
+    if max_pages is None:
+        max_pages = 1 if resource == "incidents" else 5
     url = f"{BETTERSTACK_API}/{resource}"
     prefix = f"{BETTERSTACK_API}/"
     params: dict | None = {"per_page": 50}
@@ -2942,7 +2944,7 @@ def _betterstack_get(resource: str, key: str) -> dict | None:
     all_data = []
     visited: set[str] = set()
     pages = 0
-    while url and pages < 5:
+    while url and pages < max_pages:
         visited.add(url)
         try:
             resp = httpx.get(url, headers=headers, params=params, timeout=15.0)
@@ -2977,7 +2979,7 @@ def _betterstack_get(resource: str, key: str) -> dict | None:
                 if next_val != url and next_val not in visited:
                     next_url = next_val
 
-        if pages >= 5 and next_url:
+        if pages >= max_pages and next_url:
             if resource not in _betterstack_truncated:
                 _betterstack_truncated.add(resource)
                 log(f"Better Stack {resource}: page limit reached, results truncated")
@@ -2991,10 +2993,79 @@ def _betterstack_get(resource: str, key: str) -> dict | None:
     return {"data": all_data}
 
 
+def _parse_iso_ts(ts_val: str | None) -> datetime | None:
+    if not isinstance(ts_val, str) or not ts_val.strip():
+        return None
+    s = ts_val.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, TypeError):
+        return None
+
+
+def _sanitise_cause(raw: str | None) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    filtered = "".join(
+        c if (32 <= ord(c) <= 126) else (" " if c.isspace() else "")
+        for c in raw
+    )
+    collapsed = " ".join(filtered.split())
+    if not collapsed:
+        return None
+    return collapsed[:40]
+
+
+def _index_incidents(incidents_data: list) -> tuple[dict[tuple[str, str], dict], dict[tuple[str, str], datetime]]:
+    open_inc: dict[tuple[str, str], dict] = {}
+    latest_resolved: dict[tuple[str, str], datetime] = {}
+    for item in incidents_data:
+        if not isinstance(item, dict):
+            continue
+        rel = item.get("relationships")
+        if not isinstance(rel, dict):
+            continue
+        target_key = None
+        for rtype in ("monitor", "heartbeat"):
+            r_entry = rel.get(rtype)
+            if isinstance(r_entry, dict):
+                r_data = r_entry.get("data")
+                if isinstance(r_data, dict):
+                    rid = r_data.get("id")
+                    if rid is not None:
+                        target_key = (rtype, str(rid))
+                        break
+        if target_key is None:
+            continue
+
+        attrs = item.get("attributes")
+        if not isinstance(attrs, dict):
+            continue
+
+        resolved_at_raw = attrs.get("resolved_at")
+        if resolved_at_raw is None:
+            # open incident: resolved_at is null
+            if target_key not in open_inc:
+                open_inc[target_key] = item
+        else:
+            resolved_dt = _parse_iso_ts(resolved_at_raw)
+            if resolved_dt is not None:
+                cur = latest_resolved.get(target_key)
+                if cur is None or resolved_dt > cur:
+                    latest_resolved[target_key] = resolved_dt
+
+    return open_inc, latest_resolved
+
+
 def parse_uptime(
     monitors: dict | None,
     heartbeats: dict | None,
     targets: list[str] | None = None,
+    incidents: dict | None = None,
+    now: datetime | float | int | str | None = None,
 ) -> dict:
     if monitors is None or heartbeats is None:
         return {"ok": False}
@@ -3004,6 +3075,26 @@ def parse_uptime(
     heartbeats_data = heartbeats.get("data")
     if not isinstance(monitors_data, list) or not isinstance(heartbeats_data, list):
         return {"ok": False}
+
+    if now is None:
+        now_dt = datetime.now(timezone.utc)
+    elif isinstance(now, (int, float)):
+        now_dt = datetime.fromtimestamp(now, tz=timezone.utc)
+    elif isinstance(now, datetime):
+        now_dt = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+    elif isinstance(now, str):
+        parsed = _parse_iso_ts(now)
+        now_dt = parsed if parsed is not None else datetime.now(timezone.utc)
+    else:
+        now_dt = datetime.now(timezone.utc)
+
+    incidents_data = incidents.get("data") if isinstance(incidents, dict) else None
+    if isinstance(incidents_data, list):
+        open_incidents, latest_resolved_dts = _index_incidents(incidents_data)
+        have_incidents = True
+    else:
+        open_incidents, latest_resolved_dts = {}, {}
+        have_incidents = False
 
     target_filter = None
     if targets is not None:
@@ -3064,11 +3155,39 @@ def parse_uptime(
             elif item_type == "heartbeat":
                 kind = "beat"
 
-            # Output per target is strictly {"name", "kind", "status"} - NEVER attributes.url
+            cause: str | None = None
+            since_s: int | None = None
+
+            if have_incidents:
+                res_id = str(item.get("id")) if item.get("id") is not None else None
+                res_type = "monitor" if kind == "site" else "heartbeat"
+                target_key = (res_type, res_id) if res_id is not None else None
+
+                if status == "down":
+                    open_inc = open_incidents.get(target_key) if target_key else None
+                    if open_inc is not None:
+                        open_attrs = open_inc.get("attributes") if isinstance(open_inc, dict) else {}
+                        if not isinstance(open_attrs, dict):
+                            open_attrs = {}
+                        cause = _sanitise_cause(open_attrs.get("cause"))
+                        started_dt = _parse_iso_ts(open_attrs.get("started_at"))
+                        if started_dt is not None:
+                            since_s = max(0, int((now_dt - started_dt).total_seconds()))
+                elif status == "up":
+                    res_dt = latest_resolved_dts.get(target_key) if target_key else None
+                    created_dt = _parse_iso_ts(attrs.get("created_at"))
+                    candidates = [dt for dt in (res_dt, created_dt) if dt is not None]
+                    if candidates:
+                        up_since_dt = max(candidates)
+                        since_s = max(0, int((now_dt - up_since_dt).total_seconds()))
+
+            # Output per target is strictly {"name", "kind", "status", "sinceS", "cause"} - NEVER attributes.url or incident urls
             kept.append({
                 "name": name,
                 "kind": kind,
                 "status": status,
+                "sinceS": since_s,
+                "cause": cause,
             })
 
     down_count = sum(1 for item in kept if item["status"] == "down")
@@ -3088,7 +3207,8 @@ def poll_uptime(cfg_targets: list[str] | None = None) -> dict:
         return {"ok": False}
     monitors = _betterstack_get("monitors", key)
     heartbeats = _betterstack_get("heartbeats", key)
-    res = parse_uptime(monitors, heartbeats, targets=cfg_targets)
+    incidents = _betterstack_get("incidents", key) if (monitors is not None and heartbeats is not None) else None
+    res = parse_uptime(monitors, heartbeats, targets=cfg_targets, incidents=incidents)
     if res.get("ok"):
         res["ts"] = int(time.monotonic())
     return res

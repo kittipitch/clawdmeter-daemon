@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Extend Better Stack Uptime feed with incident cause and duration (`cause`, `sinceS`).**
+  Each target in the `/api/uptime` payload now carries the open incident cause (sanitised,
+  ASCII printable, max 40 chars) and elapsed seconds in current state (`sinceS`). An UP target
+  derives `sinceS` from the latest resolved incident or resource `created_at`. If the incidents
+  endpoint fails, the payload falls back cleanly with `cause` and `sinceS` as `null`.
+
 ## v1.0.0-kitt34 (2026-10-27)
 
 - **Fix black console windows flashing on Windows.** Seven child-process calls (`agy` quota and probe,
