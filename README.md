@@ -1230,6 +1230,12 @@ z.ai-side change, that's why.
 
 ## Troubleshooting
 
+- **Daemon crash-loops with `ModuleNotFoundError: httpx` (or any module) after an OS update:** the OS moved Python
+  (e.g. 3.12 -> 3.14) out from under the venv. Recreate it:
+  `mv .venv .venv.bak_broken && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`, restart the service.
+  See [CONTRIBUTING.md](CONTRIBUTING.md) rule 5.
+
+
 > Changing the code? Read [CONTRIBUTING.md](CONTRIBUTING.md) first: each rule there fixed a platform-specific bug and has a test that guards it.
 
 

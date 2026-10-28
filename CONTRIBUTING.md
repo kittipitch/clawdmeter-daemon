@@ -51,15 +51,29 @@ user's real `~/.clawdmeter-daemon.log`, where it reads like a real failure.
 **Rule:** examples and fixtures use `example.org` / `status.example.org` and invented target names. Users monitor their
 own machines; nothing in the code or docs may assume particular target names.
 
-## 5. On Windows, edit the JSON config with Python, not PowerShell
+## 5. Recreate the venv after an OS Python upgrade
+
+**Bug (2026-10-29, Raspberry Pi OS):** the OS upgraded Python 3.12 -> 3.14 under an existing `.venv`. The venv's
+`python3` symlink follows the new interpreter, but its `lib/python3.12/site-packages` is invisible to 3.14, so every
+import failed (`ModuleNotFoundError: httpx`) and the service crash-looped (`activating`). The venv looked intact.
+
+**Rule:** after the OS Python version changes, recreate the venv:
+
+```sh
+mv .venv .venv.bak_broken && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# restart the service, then check the log for the first successful poll
+```
+
+**Guard:** none automatic yet -- a crash-looping unit with `ModuleNotFoundError` in its journal is this bug.
+
+## 6. On Windows, edit the JSON config with Python, not PowerShell
 
 **Bug (operations):** rewriting `~/.clawdmeter-daemon.json` with PowerShell's `ConvertTo-Json | Set-Content` produced
 a file the daemon rejected, so it fell back to its defaults (serve mode) and the display got no data.
 
 **Rule:** change the config from the tray menu or with a few lines of Python (`json.loads` / `json.dumps`), and keep a
 backup copy first.
-
-## 6. Restart the Windows tray daemon on the desktop session
+## 7. Restart the Windows tray daemon on the desktop session
 
 A process started over ssh runs without a desktop: no tray icon, and console-window bugs (rule 1) stay invisible. Start
 it from the desktop (`start-daemon.bat`, the login autostart, or a one-shot interactive scheduled task).
