@@ -2483,6 +2483,23 @@ def _movies_warn_once(key: str, msg: str) -> None:
         log(msg)
 
 
+_movies_problems: set = set()
+
+
+def _movies_problem(base: str, kind: str, msg: str) -> None:
+    """Log a unit's push/promote/reach problem once while it lasts (not once a minute forever)."""
+    key = (base, kind)
+    if key not in _movies_problems:
+        _movies_problems.add(key)
+        log(msg)
+
+
+def _movies_ok(base: str) -> None:
+    """A good push to this unit: forget its problems, so a later one is reported again."""
+    for key in [k for k in _movies_problems if k[0] == base]:
+        _movies_problems.discard(key)
+
+
 def _movies_fetch(url: str):
     """Network access for movies.MovieCache: bytes on HTTP 200, else None. Browser-like UA: the site
     serves the same plain HTML to it, and this is a few requests a day."""
@@ -2528,8 +2545,8 @@ def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
         years = {t.slug: (t, y) for t, y in entries}
         # Unseen movies in list order; one whose poster fails is skipped this hour (still unseen, so
         # it is retried at its next turn).
-        pick = rot.next_slug(order)
-        candidates = [pick] + [s for s in order if s != pick and s not in set(rot.seen)]
+        rot.next_slug(order)
+        candidates = rot.upcoming()
         frame = slug = None
         for s in candidates:
             frame = cache.frame_for(*years[s])
@@ -2544,15 +2561,16 @@ def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
                 r = http.post(base + "/api/movie", timeout=30.0, headers=_push_headers(),
                               files={"frame": ("frame.565", frame, "application/octet-stream")})
                 if r.status_code >= 400:
-                    log(f"Movies push {base} HTTP {r.status_code}")
+                    _movies_problem(base, "push", f"Movies push {base} HTTP {r.status_code}")
                     continue
                 r = http.post(base + "/api/movie/promote", timeout=10.0, headers=_push_headers())
                 if r.status_code >= 400:
-                    log(f"Movies promote {base} HTTP {r.status_code}")
+                    _movies_problem(base, "promote", f"Movies promote {base} HTTP {r.status_code}")
                     continue
             except httpx.HTTPError as e:
-                _movies_warn_once(f"push:{base}", f"Movies: {base} unreachable: {e}")
+                _movies_problem(base, "reach", f"Movies: {base} unreachable: {e}")
                 continue
+            _movies_ok(base)
         rot.mark_shown(slug, now)
         state[url] = {"rotation": rot.to_dict(), "frame_hash": fh}
         log(f"Movies: {base} now shows {slug}")

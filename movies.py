@@ -103,22 +103,35 @@ PERIOD_S = 3600  # one movie an hour (owner 2026-10-31), wall clock
 @dataclass
 class Rotation:
     """Where one unit is in its round. Keyed by slug, never by index, so a list that changes order or
-    length cannot skip or repeat a movie. Never random: the round walks the list in order."""
+    length cannot skip or repeat a movie. Never random: the round walks a fixed order.
+
+    `round` is the order of the round in progress: movies that join the list mid-round go to its END
+    (the theaters list is sorted by popularity, so a new movie usually appears near the top and would
+    otherwise jump the queue); movies that left the list drop out. A new round copies the list order."""
     current: str | None = None
     shown_at: float | None = None
     seen: list = field(default_factory=list)
+    round: list = field(default_factory=list)
 
     def next_slug(self, order):
-        """First movie in `order` not yet shown this round; a finished round starts over at order[0].
-        Seen slugs that left the list are simply ignored (that is how removed movies drop out)."""
         if not order:
             return None
+        listed = set(order)
+        rnd = [s for s in self.round if s in listed] + [s for s in order if s not in set(self.round)]
         seen = set(self.seen)
-        for s in order:
-            if s not in seen:
-                return s
-        self.seen = []
-        return order[0]
+        unseen = [s for s in rnd if s not in seen]
+        if not unseen:                                  # round finished: start a new one
+            rnd, self.seen = list(order), []
+            if len(rnd) > 1 and rnd[0] == self.current:  # never the same movie two hours running
+                rnd.append(rnd.pop(0))
+            unseen = rnd
+        self.round = rnd
+        return unseen[0]
+
+    def upcoming(self):
+        """Unseen movies of the current round, in order (call after next_slug)."""
+        seen = set(self.seen)
+        return [s for s in self.round if s not in seen]
 
     def mark_shown(self, slug, now):
         self.current, self.shown_at = slug, now
@@ -126,15 +139,16 @@ class Rotation:
             self.seen.append(slug)
 
     def to_dict(self):
-        return {"current": self.current, "shown_at": self.shown_at, "seen": list(self.seen)}
+        return {"current": self.current, "shown_at": self.shown_at, "seen": list(self.seen),
+                "round": list(self.round)}
 
     @classmethod
     def from_dict(cls, d):
         d = d if isinstance(d, dict) else {}
-        seen = d.get("seen") if isinstance(d.get("seen"), list) else []
+        strs = lambda v: [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
         at = d.get("shown_at")
         return cls(current=d.get("current"), shown_at=at if isinstance(at, (int, float)) else None,
-                   seen=[x for x in seen if isinstance(x, str)])
+                   seen=strs(d.get("seen")), round=strs(d.get("round")))
 
 
 def due(rot, now, period_s=PERIOD_S) -> bool:
@@ -284,6 +298,7 @@ def frame_hash(frame: bytes) -> str:
 
 
 # ---- fetching and caching --------------------------------------------------------------------
+RETRY_S = 10 * 60      # after a refresh that fetched nothing
 REFRESH_S = 6 * 3600   # lists refresh every 6 h; movie pages are read once per movie, posters once per image
 MOVIE_URL = "https://www.rottentomatoes.com/m/{slug}"
 
@@ -319,12 +334,17 @@ class MovieCache:
         at = self._lists.get("fetched_at")
         if not force and isinstance(at, (int, float)) and self.now() - at < REFRESH_S:
             return
+        got_any = False
         for source, url in SOURCES.items():
             raw = self.fetch(url)
             tiles = parse_browse(raw.decode("utf-8", "replace"), source) if raw else []
             if tiles:   # a page that parses to nothing (site change, outage) keeps the last good list
                 self._lists[source] = [t.__dict__ for t in tiles]
-        self._lists["fetched_at"] = self.now()
+                got_any = True
+        if got_any:
+            self._lists["fetched_at"] = self.now()
+        else:   # nothing fetched (network not up yet, site down): try again in RETRY_S, not in 6 h
+            self._lists["fetched_at"] = self.now() - REFRESH_S + RETRY_S
         self._save("lists.json", self._lists)
         for t in self._tiles("theaters") + self._tiles("home"):
             if t.slug not in self._years:
