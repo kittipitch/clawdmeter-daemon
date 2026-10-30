@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Movies page (`--movies`).** Rotten Tomatoes Certified Fresh movies in theaters and at home,
+  released this year or last, one an hour per unit, in list order and never random. The daemon
+  paints the whole frame (poster, Tomatometer, Popcorn score, release year, where it is showing)
+  in the device's own pixel font and pushes it to the new `/api/movie` route; each unit's own
+  Movies settings decide what it gets. New module `movies.py`, tests `test_movies_*.py`.
+
 ## v1.0.0-kitt36 (2026-10-27)
 
 - **Untranslatable titles read "Not translated".** A non-English calendar title that cannot be translated (no `trans`, or
