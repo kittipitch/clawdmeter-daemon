@@ -1100,16 +1100,19 @@ theaters) or a TV icon (at home). Only Certified Fresh movies released this year
 [in theaters](https://www.rottentomatoes.com/browse/movies_in_theaters/critics:certified_fresh~sort:popular)
 and [at home](https://www.rottentomatoes.com/browse/movies_at_home/critics:certified_fresh).
 
-- Tick **Movies** in the device's carousel settings, plus **In theaters** and/or **At home**. Each
-  unit decides for itself; the daemon reads the choice from that unit's `/api/config`.
-- The daemon sends the poster (160x240) plus the scores, year and source; the device draws the
-  cards, icons and numbers in its own font, so the page matches the quota pages, and applies the
+- Tick **Movies** in the device's carousel settings (or set **Mode → Movies** to show only movies),
+  plus **In theaters** and/or **At home**. Each unit decides for itself; the daemon reads the choice
+  from that unit's `/api/config`. Changing the boxes takes effect at the next hourly switch: the
+  queue keeps its place and simply skips the list you unticked.
+- The daemon sends the poster (160x240) plus the scores, year, source and title; the device draws the
+  title in yellow across the top (two lines at most) and one
+  card with the icons and numbers in its own font, so the page matches the quota pages, and applies the
   unit's colour settings to the poster. It keeps at most two of these (the one on screen and the next). Each unit walks the list in order, one movie an hour, every
   movie once before any repeats; the place is saved in `~/.clawdmeter-movies/state.json`, so a
   restart carries on where it left off.
 - The lists refresh every 6 hours, each movie page is read once for its release year, and each
   poster is fetched once (cached in `~/.clawdmeter-movies/`).
-- Needs firmware with the Movies page. Remembered like `--album`; `--no-movies` turns it off.
+- Needs smalltv-mod v1.0.0-kitt37 or later. Remembered like `--album`; `--no-movies` turns it off.
 
 ## Options
 

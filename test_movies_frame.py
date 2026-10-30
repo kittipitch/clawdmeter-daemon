@@ -1,5 +1,6 @@
-"""The movie upload is the poster as a 160x240 big-endian RGB565 picture plus an 8-byte trailer the
-device draws its own text from: 'M','V', tomatometer, popcorn, year (LE), source, 0.
+"""The movie upload is the poster as a 160x240 big-endian RGB565 picture plus a 72-byte trailer the
+device draws its own text from: 'M','V', tomatometer, popcorn, year (LE), source, title length, then the
+title as printable ASCII in a 64-byte zero-padded field.
 
 Run with --preview OUT.png to also save the poster part as a PNG for eyeballing.
 """
@@ -14,14 +15,23 @@ jpeg = (FX / "poster_clayface_160x240.jpg").read_bytes()
 tile = movies.parse_browse((FX / "rt_theaters.html").read_text(encoding="utf-8"), "theaters")[0]
 assert tile.slug == "clayface"
 
-assert movies.MOVIE_BYTES == 160 * 240 * 2 + 8 == 76808
+assert movies.MOVIE_BYTES == 160 * 240 * 2 + 72 == 76872
 up = movies.pack_movie(jpeg, tile, 2026)
 assert isinstance(up, bytes) and len(up) == movies.MOVIE_BYTES, len(up or b"")
-assert up[-8:] == bytes([ord("M"), ord("V"), 77, 94, 2026 & 0xFF, 2026 >> 8, 0, 0]), list(up[-8:])
+assert up[-72:-64] == bytes([ord("M"), ord("V"), 77, 94, 2026 & 0xFF, 2026 >> 8, 0, 8]), list(up[-72:-64])
+assert up[-64:] == b"Clayface" + bytes(56), up[-64:]
 
 home_none = dataclasses.replace(tile, popcorn=None, tomatometer=100, source="home")
-t = movies.pack_movie(jpeg, home_none, 2025)[-8:]
-assert t == bytes([ord("M"), ord("V"), 100, 255, 2025 & 0xFF, 2025 >> 8, 1, 0]), list(t)
+t = movies.pack_movie(jpeg, home_none, 2025)[-72:-64]
+assert t[:7] == bytes([ord("M"), ord("V"), 100, 255, 2025 & 0xFF, 2025 >> 8, 1]), list(t)
+
+# The device font is ASCII: accents fold to their letter, other symbols and runs of spaces go, long
+# titles are cut to the 64-byte field.
+assert movies.ascii_title("Filipiñana") == "Filipinana"
+assert movies.ascii_title("  Amélie —  Le\tFabuleux ") == "Amelie Le Fabuleux"
+assert movies.ascii_title("x" * 80) == "x" * 64
+long = movies.pack_movie(jpeg, dataclasses.replace(tile, title="Mission: Impossible " * 5), 2026)
+assert len(long) == movies.MOVIE_BYTES and long[-65] == 64 and long[-64:] == ("Mission: Impossible " * 5)[:64].encode()
 
 
 def px(f, x, y):
