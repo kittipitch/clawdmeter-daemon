@@ -11,6 +11,14 @@
   README lists the macOS, Linux and Windows steps.
 
 - **Tests no longer write into the real daemon log** (`~/.clawdmeter-daemon.log`); each test logs to a temp file.
+- **`CLAUDE_CODE_OAUTH_TOKEN_FILE` reads the Claude token from a file**, so the token never sits in a systemd
+  `EnvironmentFile` or the process environment (same pattern as `CLAWDMETER_BETTERSTACK_KEY_FILE`). The file wins over
+  the inline variable; a missing or empty file falls back to the other sources with a hint and never crashes.
+- **uv is the supported way to run the daemon:** `pyproject.toml` + a committed `uv.lock`, run with
+  `uv run --project <dir> python clawdmeter_daemon.py ...`. `requirements.txt` stays for plain pip.
+- **Docs:** recreating the venv after an OS Python upgrade (a pi5 OS update moved Python 3.12 to 3.14 under the venv);
+  making the Windows login autostart push, and undoing it; `--push --interval 300 --push-interval 30` recommended for
+  every autostart.
 
 ## v1.0.0-kitt35 (2026-10-27)
 
