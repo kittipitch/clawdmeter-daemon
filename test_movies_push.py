@@ -57,7 +57,7 @@ class Unit:
                     i = raw.find(b"\r\n\r\n") + 4
                     j = raw.rfind(b"\r\n--")
                     frame = raw[i:j]
-                    if len(frame) != 115200:
+                    if len(frame) != movies.MOVIE_BYTES:
                         return self._send(400, {"ok": False})
                     unit.frames.append(frame)
                     unit.next = frame

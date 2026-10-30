@@ -155,74 +155,17 @@ def due(rot, now, period_s=PERIOD_S) -> bool:
     return rot.shown_at is None or now - rot.shown_at >= period_s
 
 
-# ---- painting --------------------------------------------------------------------------------
-# 5x7 glyphs copied from the classic Adafruit GFX font (glcdfont, BSD licence), the font the SmallTV
-# itself draws with, so the scores look like the rest of the device. Each tuple is 5 columns, bit 0 =
-# top row.
-GLYPHS = {
-    '0': (0x3E, 0x51, 0x49, 0x45, 0x3E),
-    '1': (0x00, 0x42, 0x7F, 0x40, 0x00),
-    '2': (0x72, 0x49, 0x49, 0x49, 0x46),
-    '3': (0x21, 0x41, 0x49, 0x4D, 0x33),
-    '4': (0x18, 0x14, 0x12, 0x7F, 0x10),
-    '5': (0x27, 0x45, 0x45, 0x45, 0x39),
-    '6': (0x3C, 0x4A, 0x49, 0x49, 0x31),
-    '7': (0x41, 0x21, 0x11, 0x09, 0x07),
-    '8': (0x36, 0x49, 0x49, 0x49, 0x36),
-    '9': (0x46, 0x49, 0x49, 0x29, 0x1E),
-    '%': (0x23, 0x13, 0x08, 0x64, 0x62),
-    '-': (0x08, 0x08, 0x08, 0x08, 0x08),
-    ' ': (0x00, 0x00, 0x00, 0x00, 0x00),
-    'A': (0x7C, 0x12, 0x11, 0x12, 0x7C),
-    'B': (0x7F, 0x49, 0x49, 0x49, 0x36),
-    'C': (0x3E, 0x41, 0x41, 0x41, 0x22),
-    'D': (0x7F, 0x41, 0x41, 0x41, 0x3E),
-    'E': (0x7F, 0x49, 0x49, 0x49, 0x41),
-    'F': (0x7F, 0x09, 0x09, 0x09, 0x01),
-    'G': (0x3E, 0x41, 0x41, 0x51, 0x73),
-    'H': (0x7F, 0x08, 0x08, 0x08, 0x7F),
-    'I': (0x00, 0x41, 0x7F, 0x41, 0x00),
-    'J': (0x20, 0x40, 0x41, 0x3F, 0x01),
-    'K': (0x7F, 0x08, 0x14, 0x22, 0x41),
-    'L': (0x7F, 0x40, 0x40, 0x40, 0x40),
-    'M': (0x7F, 0x02, 0x1C, 0x02, 0x7F),
-    'N': (0x7F, 0x04, 0x08, 0x10, 0x7F),
-    'O': (0x3E, 0x41, 0x41, 0x41, 0x3E),
-    'P': (0x7F, 0x09, 0x09, 0x09, 0x06),
-    'Q': (0x3E, 0x41, 0x51, 0x21, 0x5E),
-    'R': (0x7F, 0x09, 0x19, 0x29, 0x46),
-    'S': (0x26, 0x49, 0x49, 0x49, 0x32),
-    'T': (0x03, 0x01, 0x7F, 0x01, 0x03),
-    'U': (0x3F, 0x40, 0x40, 0x40, 0x3F),
-    'V': (0x1F, 0x20, 0x40, 0x20, 0x1F),
-    'W': (0x3F, 0x40, 0x38, 0x40, 0x3F),
-    'X': (0x63, 0x14, 0x08, 0x14, 0x63),
-    'Y': (0x03, 0x04, 0x78, 0x04, 0x03),
-    'Z': (0x61, 0x59, 0x49, 0x4D, 0x43)
-}
-
-W = H = 240
+# ---- packing the upload -------------------------------------------------------------------------
+# The poster is sent as a picture; the DEVICE draws the cards, icons and text in its own font so the
+# page matches the quota pages exactly (owner 2026-10-31: "poster = pic and the font shud be font").
 POSTER_W, POSTER_H = 160, 240
-COLUMN_RGB = (0x1F, 0x1F, 0x1E)        # the firmware's C_PANEL card fill (0x18E3)
-TEXT_RGB = (0xFF, 0xFF, 0xFF)
-DIM_RGB = (0x9A, 0xAA, 0xAA)
-TOMATO_RGB = (0xFA, 0x32, 0x0A)
-POPCORN_RGB = (0xFF, 0xD2, 0x00)
-STRIPE_RGB = (0xE8, 0x2B, 0x2B)
-
-# 12x12 pixel-art icons, drawn at 2x (24x24). "#" = main colour, "g" = green / stripe, "." = clear.
-TOMATO = [
-    "....gg.g....", "...gggggg...", "..##gggg##..", ".##########.", "############", "############",
-    "############", "############", "############", ".##########.", "..########..", "....####....",
-]
-POPCORN = [
-    "..###.###...", ".#########..", "###########.", ".#########..", "..g#g#g#g...", "..g#g#g#g...",
-    "..g#g#g#g...", "...g#g#g#...", "...g#g#g#...", "...g#g#g#...", "....g#g#....", "....g#g#....",
-]
+POSTER_BYTES = POSTER_W * POSTER_H * 2
+MOVIE_BYTES = POSTER_BYTES + 8     # + trailer: 'M','V', tomatometer, popcorn, year LE, source, 0
+COLUMN_RGB = (0x1F, 0x1F, 0x1E)    # the firmware's C_PANEL (kept for reference/tests)
 
 
 def rgb565_be(img) -> bytes:
-    """A 240x240 RGB Pillow image as big-endian RGB565 (the firmware byte-swaps per row)."""
+    """An RGB Pillow image as big-endian RGB565 (the firmware byte-swaps per row)."""
     rgb = img.convert("RGB").tobytes()
     out = bytearray(len(rgb) // 3 * 2)
     for i in range(len(rgb) // 3):
@@ -233,64 +176,23 @@ def rgb565_be(img) -> bytes:
     return bytes(out)
 
 
-def _text_w(text, scale):
-    return len(text) * 6 * scale - scale          # 5 px glyph + 1 px gap, no gap after the last
+def _score_byte(v):
+    return 255 if v is None else max(0, min(100, int(v)))
 
 
-def _draw_text(d, text, cx, y, scale, rgb):
-    """Centre `text` on x=cx at the top y, scale x scale pixels per font dot."""
-    x = cx - _text_w(text, scale) // 2
-    for ch in text:
-        cols = GLYPHS.get(ch, GLYPHS[" "])
-        for c, bits in enumerate(cols):
-            for r in range(7):
-                if bits >> r & 1:
-                    d.rectangle([x + c * scale, y + r * scale, x + c * scale + scale - 1, y + r * scale + scale - 1],
-                                fill=rgb)
-        x += 6 * scale
-
-
-def _draw_icon(d, art, cx, y, main, other, k=2):
-    x0 = cx - len(art[0]) * k // 2
-    for r, row in enumerate(art):
-        for c, p in enumerate(row):
-            if p != ".":
-                d.rectangle([x0 + c * k, y + r * k, x0 + c * k + k - 1, y + r * k + k - 1],
-                            fill=main if p == "#" else other)
-
-
-def _fit_scale(text, width, scales):
-    return next((s for s in scales if _text_w(text, s) <= width), scales[-1])
-
-
-def paint_frame(poster_jpeg: bytes, tile, year: int):
-    """The finished screen: poster 160x240 at the left, a dark 80 px column with the Tomatometer, the
-    Popcorn score (or --), the release year and IN THEATERS / AT HOME. None if the JPEG is unusable."""
+def pack_movie(poster_jpeg: bytes, tile, year: int):
+    """Poster 160x240 RGB565 + 8-byte trailer, or None if the JPEG is unusable."""
     import io
-    from PIL import Image, ImageDraw, ImageOps
+    from PIL import Image, ImageOps
     try:
         with Image.open(io.BytesIO(poster_jpeg)) as im:
             poster = ImageOps.fit(im.convert("RGB"), (POSTER_W, POSTER_H), Image.LANCZOS)
     except Exception:
         return None
-    img = Image.new("RGB", (W, H), COLUMN_RGB)
-    img.paste(poster, (0, 0))
-    d = ImageDraw.Draw(img)
-    cx, inner = POSTER_W + (W - POSTER_W) // 2, W - POSTER_W - 6
-    tm = "--" if tile.tomatometer is None else f"{tile.tomatometer}%"
-    pc = "--" if tile.popcorn is None else f"{tile.popcorn}%"
-    _draw_icon(d, TOMATO, cx, 10, TOMATO_RGB, (0x3C, 0xB0, 0x3C))
-    _draw_text(d, tm, cx, 40, _fit_scale(tm, inner, (4, 3)), TEXT_RGB)
-    _draw_icon(d, POPCORN, cx, 84, POPCORN_RGB, STRIPE_RGB)
-    _draw_text(d, pc, cx, 114, _fit_scale(pc, inner, (4, 3)), TEXT_RGB)
-    _draw_text(d, str(year), cx, 162, 3, TEXT_RGB)
-    lines = ["IN", "THEATERS"] if tile.source == "theaters" else ["AT", "HOME"]
-    y = 194
-    for ln in lines:
-        s = _fit_scale(ln, inner, (2, 1))
-        _draw_text(d, ln, cx, y, s, DIM_RGB)
-        y += 7 * s + 4
-    return rgb565_be(img)
+    y = max(0, min(0xFFFF, int(year)))
+    trailer = bytes([ord("M"), ord("V"), _score_byte(tile.tomatometer), _score_byte(tile.popcorn),
+                     y & 0xFF, y >> 8, 0 if tile.source == "theaters" else 1, 0])
+    return rgb565_be(poster) + trailer
 
 
 def frame_hash(frame: bytes) -> str:
@@ -392,7 +294,7 @@ class MovieCache:
             tmp = p.with_name(p.name + ".tmp")
             tmp.write_bytes(raw)
             tmp.replace(p)
-        frame = paint_frame(p.read_bytes(), tile, year)
+        frame = pack_movie(p.read_bytes(), tile, year)
         if frame is None:
             p.unlink(missing_ok=True)   # not a usable image: fetch again next time
         return frame

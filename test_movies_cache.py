@@ -90,7 +90,7 @@ for p in (root / "posters").glob(f"{tile.poster_hash}.jpg"):
 assert cache.frame_for(tile, year) is None
 net.fail.discard(small)
 before = net.calls[small]
-assert len(cache.frame_for(tile, year)) == 115200
+assert len(cache.frame_for(tile, year)) == movies.MOVIE_BYTES
 assert net.calls[small] == before + 1
 
 # New artwork for the same movie: new hash, new fetch, old file pruned at the next refresh.
