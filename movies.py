@@ -281,3 +281,98 @@ def paint_frame(poster_jpeg: bytes, tile, year: int):
 
 def frame_hash(frame: bytes) -> str:
     return hashlib.sha256(frame).hexdigest()
+
+
+# ---- fetching and caching --------------------------------------------------------------------
+REFRESH_S = 6 * 3600   # lists refresh every 6 h; movie pages are read once per movie, posters once per image
+MOVIE_URL = "https://www.rottentomatoes.com/m/{slug}"
+
+
+class MovieCache:
+    """Lists, release years and posters on disk under `root`. `fetch(url) -> bytes | None` is the only
+    network access (injected, so tests run offline); `now() -> float` is the clock."""
+
+    def __init__(self, root, fetch, now):
+        import json
+        from pathlib import Path
+        self.root, self.fetch, self.now = Path(root), fetch, now
+        (self.root / "posters").mkdir(parents=True, exist_ok=True)
+        self._lists = self._load("lists.json", {"fetched_at": None, "theaters": [], "home": []})
+        self._years = self._load("years.json", {})
+        self._json = json
+
+    def _load(self, name, default):
+        import json
+        try:
+            d = json.loads((self.root / name).read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else default
+        except (OSError, ValueError):
+            return default
+
+    def _save(self, name, data):
+        p = self.root / name
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(self._json.dumps(data), encoding="utf-8")
+        tmp.replace(p)
+
+    def refresh_lists(self, force=False):
+        at = self._lists.get("fetched_at")
+        if not force and isinstance(at, (int, float)) and self.now() - at < REFRESH_S:
+            return
+        for source, url in SOURCES.items():
+            raw = self.fetch(url)
+            tiles = parse_browse(raw.decode("utf-8", "replace"), source) if raw else []
+            if tiles:   # a page that parses to nothing (site change, outage) keeps the last good list
+                self._lists[source] = [t.__dict__ for t in tiles]
+        self._lists["fetched_at"] = self.now()
+        self._save("lists.json", self._lists)
+        for t in self._tiles("theaters") + self._tiles("home"):
+            if t.slug not in self._years:
+                raw = self.fetch(MOVIE_URL.format(slug=t.slug))
+                if raw is not None:
+                    self._years[t.slug] = release_year(raw.decode("utf-8", "replace"))
+        self._save("years.json", self._years)
+        keep = {t.poster_hash for t in self._tiles("theaters") + self._tiles("home")}
+        for p in (self.root / "posters").glob("*.jpg"):
+            if p.stem not in keep:
+                p.unlink(missing_ok=True)
+
+    def _tiles(self, source):
+        out = []
+        for d in self._lists.get(source) or []:
+            try:
+                out.append(Tile(**d))
+            except TypeError:
+                continue
+        return out
+
+    def entries(self, sources):
+        """(tile, year) for the requested sources, year-filtered, in page order; theaters and home
+        interleaved when both are asked for; a movie on both lists appears once (theaters first)."""
+        from datetime import date
+        today = date.fromtimestamp(self.now())
+        lists = [[t for t in self._tiles(s) if keep_year(self._years.get(t.slug), today)]
+                 for s in ("theaters", "home") if s in sources]
+        out, seen = [], set()
+        for i in range(max((len(x) for x in lists), default=0)):
+            for lst in lists:
+                if i < len(lst) and lst[i].slug not in seen:
+                    seen.add(lst[i].slug)
+                    out.append((lst[i], self._years[lst[i].slug]))
+        return out
+
+    def frame_for(self, tile, year):
+        """The painted frame for this movie, fetching its poster once per image. None (skip it this
+        hour, retry next time) when the poster cannot be fetched or decoded."""
+        p = self.root / "posters" / f"{tile.poster_hash}.jpg"
+        if not p.is_file():
+            raw = self.fetch(poster_url_at(tile.poster_url, POSTER_W, POSTER_H))
+            if not raw:
+                return None
+            tmp = p.with_name(p.name + ".tmp")
+            tmp.write_bytes(raw)
+            tmp.replace(p)
+        frame = paint_frame(p.read_bytes(), tile, year)
+        if frame is None:
+            p.unlink(missing_ok=True)   # not a usable image: fetch again next time
+        return frame
