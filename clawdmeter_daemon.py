@@ -2466,6 +2466,118 @@ def album_push_loop(stop: threading.Event, targets_fn, folder: Path, shuffle: bo
             delay = ALBUM_IDLE_SEC
 
 
+
+# ---- Movies: Rotten Tomatoes Certified Fresh, one movie an hour per unit -----------------------
+# The logic (parsing, release year, rotation, painting, caching) lives in movies.py; this is the
+# thread and the device contract. Per unit: read its Movies settings from its own /api/config, and
+# when its hour is up push the next frame to /api/movie, then /api/movie/promote. The daemon owns
+# the clock; a unit that cannot be reached is not advanced.
+MOVIES_DIR = Path.home() / ".clawdmeter-movies"
+MOVIES_TICK_SEC = 60.0
+_movies_warned: set = set()
+
+
+def _movies_warn_once(key: str, msg: str) -> None:
+    if key not in _movies_warned:
+        _movies_warned.add(key)
+        log(msg)
+
+
+def _movies_fetch(url: str):
+    """Network access for movies.MovieCache: bytes on HTTP 200, else None. Browser-like UA: the site
+    serves the same plain HTML to it, and this is a few requests a day."""
+    try:
+        r = httpx.get(url, timeout=20.0, follow_redirects=True,
+                      headers={"User-Agent": "Mozilla/5.0 (clawdmeter-daemon movies page)"})
+        return r.content if r.status_code == 200 else None
+    except httpx.HTTPError as e:
+        _movies_warn_once(f"fetch:{url[:60]}", f"Movies: fetch failed {url[:80]}: {e}")
+        return None
+
+
+def _unit_base(push_url: str) -> str:
+    return _device_config_url(push_url)[: -len("/api/config")]
+
+
+def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
+    """One pass over every unit; returns the updated state {push_url: {"rotation", "frame_hash"}}."""
+    import movies
+    state = dict(state or {})
+    for url in targets:
+        base = _unit_base(url)
+        try:
+            r = http.get(base + "/api/config", timeout=10.0)
+            ucfg = r.json() if r.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
+            ucfg = None
+        if not isinstance(ucfg, dict) or not ucfg.get("carouselMovies"):
+            continue
+        sources = {s for s, k in (("theaters", "moviesTheaters"), ("home", "moviesHome"))
+                   if ucfg.get(k, True)}
+        if not sources:
+            continue
+        unit = state.get(url) or {}
+        rot = movies.Rotation.from_dict(unit.get("rotation"))
+        if not movies.due(rot, now):
+            continue
+        entries = cache.entries(sources)
+        if not entries:
+            _movies_warn_once("empty", "Movies: no movies to show yet (lists empty or all filtered)")
+            continue
+        order = [t.slug for t, _ in entries]
+        years = {t.slug: (t, y) for t, y in entries}
+        # Unseen movies in list order; one whose poster fails is skipped this hour (still unseen, so
+        # it is retried at its next turn).
+        pick = rot.next_slug(order)
+        candidates = [pick] + [s for s in order if s != pick and s not in set(rot.seen)]
+        frame = slug = None
+        for s in candidates:
+            frame = cache.frame_for(*years[s])
+            if frame is not None:
+                slug = s
+                break
+        if frame is None:
+            continue
+        fh = movies.frame_hash(frame)
+        if fh != unit.get("frame_hash"):
+            try:
+                r = http.post(base + "/api/movie", timeout=30.0, headers=_push_headers(),
+                              files={"frame": ("frame.565", frame, "application/octet-stream")})
+                if r.status_code >= 400:
+                    log(f"Movies push {base} HTTP {r.status_code}")
+                    continue
+                r = http.post(base + "/api/movie/promote", timeout=10.0, headers=_push_headers())
+                if r.status_code >= 400:
+                    log(f"Movies promote {base} HTTP {r.status_code}")
+                    continue
+            except httpx.HTTPError as e:
+                _movies_warn_once(f"push:{base}", f"Movies: {base} unreachable: {e}")
+                continue
+        rot.mark_shown(slug, now)
+        state[url] = {"rotation": rot.to_dict(), "frame_hash": fh}
+        log(f"Movies: {base} now shows {slug}")
+    return state
+
+
+def movies_push_loop(stop: threading.Event, targets_fn, cache, state_path: Path) -> None:
+    log("Movies: Rotten Tomatoes Certified Fresh, one movie an hour per unit")
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    while not stop.is_set():
+        try:
+            cache.refresh_lists()
+            new = movies_tick(cache, targets_fn(), state, time.time(), httpx)
+            if new != state:
+                state = new
+                tmp = state_path.with_name(state_path.name + ".tmp")
+                tmp.write_text(json.dumps(state), encoding="utf-8")
+                tmp.replace(state_path)
+        except Exception as e:                      # never let the movies thread die
+            _movies_warn_once(f"loop:{type(e).__name__}", f"Movies: {type(e).__name__}: {e}")
+        stop.wait(MOVIES_TICK_SEC)
+
 def poll_openrouter(api_key: str) -> dict:
     """Fetch OpenRouter key usage/spend. Plain authenticated GET, no OAuth
     dance and no model call; parsed defensively because only the few
@@ -4930,6 +5042,12 @@ def main() -> None:
                          f"device's carousel settings.")
     ap.add_argument("--no-album", action="store_true",
                     help="disable the album feature (overrides a previously remembered --album)")
+    ap.add_argument("--movies", action="store_true",
+                    help="enable the Movies page: Rotten Tomatoes Certified Fresh (in theaters and at "
+                         "home, released this year or last), one movie an hour. Also tick Movies in "
+                         "the device's carousel settings.")
+    ap.add_argument("--no-movies", action="store_true",
+                    help="disable the Movies page (overrides a previously remembered --movies)")
     ap.add_argument("--album-shuffle", action="store_true",
                     help="pick pictures at random instead of in filename order")
     ap.add_argument("--no-zai", action="store_true",
@@ -5068,6 +5186,10 @@ def main() -> None:
         cfg["album_dir"] = args.album
     if args.no_album:
         cfg["album_enabled"] = False
+    if args.movies:
+        cfg["movies_enabled"] = True
+    if args.no_movies:
+        cfg["movies_enabled"] = False
     if args.album_shuffle:
         cfg["album_shuffle"] = True
     if args.zai:
@@ -5200,6 +5322,20 @@ def main() -> None:
                              daemon=True).start()
         else:
             log("Album enabled but no --push-to host configured - nothing to push to")
+
+    # Movies: independent of the primary Transport, like the album.
+    if cfg.get("movies_enabled"):
+        movies_targets = tuple(_static_push_urls(cfg))
+        if movies_targets:
+            import movies as _movies
+            MOVIES_DIR.mkdir(parents=True, exist_ok=True)
+            movies_cache = _movies.MovieCache(MOVIES_DIR, _movies_fetch, time.time)
+            threading.Thread(target=movies_push_loop,
+                             args=(threading.Event(), lambda: movies_targets, movies_cache,
+                                   MOVIES_DIR / "state.json"),
+                             daemon=True).start()
+        else:
+            log("Movies enabled but no --push-to host configured - nothing to push to")
 
     # OpenRouter: independent of the primary Transport too, same reasoning as z.ai.
     if cfg.get("openrouter_enabled"):
