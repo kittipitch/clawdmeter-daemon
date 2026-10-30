@@ -6,7 +6,7 @@ thread, the CLI flag and the device pushes. Sources (owner-chosen, Certified Fre
 import hashlib
 import html
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 SOURCES = {
     "theaters": "https://www.rottentomatoes.com/browse/movies_in_theaters/critics:certified_fresh~sort:popular",
@@ -95,3 +95,47 @@ def release_year(page: str):
 def keep_year(year, today) -> bool:
     """Owner rule: this year or the year before, never further back."""
     return year is not None and today.year - 1 <= year <= today.year
+
+
+PERIOD_S = 3600  # one movie an hour (owner 2026-10-31), wall clock
+
+
+@dataclass
+class Rotation:
+    """Where one unit is in its round. Keyed by slug, never by index, so a list that changes order or
+    length cannot skip or repeat a movie. Never random: the round walks the list in order."""
+    current: str | None = None
+    shown_at: float | None = None
+    seen: list = field(default_factory=list)
+
+    def next_slug(self, order):
+        """First movie in `order` not yet shown this round; a finished round starts over at order[0].
+        Seen slugs that left the list are simply ignored (that is how removed movies drop out)."""
+        if not order:
+            return None
+        seen = set(self.seen)
+        for s in order:
+            if s not in seen:
+                return s
+        self.seen = []
+        return order[0]
+
+    def mark_shown(self, slug, now):
+        self.current, self.shown_at = slug, now
+        if slug not in self.seen:
+            self.seen.append(slug)
+
+    def to_dict(self):
+        return {"current": self.current, "shown_at": self.shown_at, "seen": list(self.seen)}
+
+    @classmethod
+    def from_dict(cls, d):
+        d = d if isinstance(d, dict) else {}
+        seen = d.get("seen") if isinstance(d.get("seen"), list) else []
+        at = d.get("shown_at")
+        return cls(current=d.get("current"), shown_at=at if isinstance(at, (int, float)) else None,
+                   seen=[x for x in seen if isinstance(x, str)])
+
+
+def due(rot, now, period_s=PERIOD_S) -> bool:
+    return rot.shown_at is None or now - rot.shown_at >= period_s
