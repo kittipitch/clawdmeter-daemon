@@ -1109,7 +1109,7 @@ for the full device-side story.
 --serve             run the HTTP server (the default only when no transport is
                     chosen AND no push target is saved -- see Quick start)
 --host / --port     bind address for --serve (default 0.0.0.0:8787)
---interval N        seconds between Claude API refreshes (default 60)
+--interval N        seconds between Claude API refreshes (default 60; 300 recommended)
 --no-tray           run headless in the console
 --install           register autostart at login (per-user) and exit
 --uninstall         remove the autostart entry and exit
@@ -1235,10 +1235,21 @@ z.ai-side change, that's why.
 
 ## Troubleshooting
 
+- **"Two daemon processes" that aren't duplicates (Windows):** in Task Manager /
+  `Win32_Process` you will see the venv `pythonw.exe` running `clawdmeter_daemon.py` AND a
+  base-interpreter `python.exe` with the same script — the second is a **child the daemon
+  spawns itself** (same tree, check `ParentProcessId`). One daemon can legitimately own
+  two interpreter processes. Kill only the tree whose processes share a parent chain and
+  match the autostart command; judge by `CreationDate` + parent chain, never by count.
+- **Run-key autostart doesn't fire:** registry Run entries start at **interactive login**
+  only. At the lock screen (no `explorer.exe`) nothing starts — expected, not a bug.
+  The tray daemon's log then appears under the *console session's* profile home
+  (e.g. `C:\Users\<you>\.clawdmeter-daemon.log`), which can differ from the profile an
+  ssh session sees (`$HOME` differs per session type; HKCU env vars are shared).
 - **Daemon crash-loops with `ModuleNotFoundError: httpx` (or any module) after an OS update:** the OS moved Python
   (e.g. 3.12 -> 3.14) out from under the venv. Recreate it:
   `mv .venv .venv.bak_broken && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`, restart the service.
-  See [CONTRIBUTING.md](CONTRIBUTING.md) rule 5.
+  See [CONTRIBUTING.md](CONTRIBUTING.md) rule 5. With uv: `uv sync` replaces the whole recipe.
 
 
 > Changing the code? Read [CONTRIBUTING.md](CONTRIBUTING.md) first: each rule there fixed a platform-specific bug and has a test that guards it.

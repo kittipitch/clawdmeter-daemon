@@ -288,6 +288,19 @@ the daemon still runs, just headless. `.local` addresses need `avahi-daemon` run
 
   macOS/Linux: delete `--push` from the plist/`Exec=` line. Both directions take effect
   at the NEXT login; the currently running daemon keeps its own mode until restarted.
+
+  **Recommended flags for ANY permanent autostart (Windows, macOS, Linux)** — match what
+  the systemd units on the project's servers run, so every host behaves the same:
+
+  ```
+  --push --interval 300 --push-interval 30
+  ```
+
+  `--push` feeds the SmallTV; `--interval 300` keeps the Claude quota poll at 5 minutes
+  (the 60 s default is one cheap authenticated GET, but 300 s is what the servers run and
+  makes logs comparable across hosts); `--push-interval 30` is the default push cadence.
+  Without `--interval`, a headless autostart polls at 60 s — measured 2026-10-30 on the
+  clementineX soak (one `5h=` line per minute).
   Note: with `--push` in autostart AND another daemon (e.g. a Raspberry Pi) feeding the
   same SmallTV, the device gets pushes from both — last write wins.
 - **Uninstalling**: `uninstall.bat` (Windows) / `./uninstall.sh` (macOS) —
