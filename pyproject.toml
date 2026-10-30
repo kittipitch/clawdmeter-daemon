@@ -1,0 +1,27 @@
+[project]
+name = "clawdmeter-daemon"
+version = "1.0.0"
+description = "Claude usage -> GeekMagic SmallTV daemon (quota, uptime, weather, calendar)"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+    # Google Calendar service-account auth (--calendar-id + a service-account key).
+    # See README.md; the interactive OAuth Desktop-app flow works without this.
+    "google-auth>=2.30",
+    # Real-time US AQI for the weather page (poll_weather()).
+    "python-aqi>=0.6.1",
+    # Serial transport (--serial): the ESP32-S3 Clawdmeter over USB CDC.
+    "pyserial>=3.5",
+    # Tray icon. Omit with --no-tray (headless hosts).
+    "pystray>=0.19",
+    "Pillow>=10.0",
+    # mDNS auto-discovery for --push; explicit --push-to works without it.
+    "zeroconf>=0.132",
+    # macOS tray backend, auto-scoped by environment marker (mirrors requirements.txt).
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+]
+
+[tool.uv]
+# The daemon runs via `uv run --project <dir>` on every host; the venv under
+# .venv is uv-managed from this file. requirements.txt stays for plain pip.
+package = false
