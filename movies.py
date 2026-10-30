@@ -71,3 +71,27 @@ def parse_browse(page: str, source: str) -> list:
             source=source,
         ))
     return tiles
+
+
+def _label_year(flat, label):
+    m = re.search(r'data-qa="item-label"> ?' + re.escape(label) + r' ?</rt-text>.*?data-qa="item-value"> ?([^<]+?) ?<',
+                  flat)
+    y = re.search(r"\b(19|20)\d\d\b", m.group(1)) if m else None
+    return int(y.group(0)) if y else None
+
+
+def release_year(page: str):
+    """The movie's release year from its page: "Release Date (Theaters)", else "(Streaming)", else
+    the JSON-LD dateCreated (least reliable). None when none is found (the movie is then dropped)."""
+    flat = re.sub(r"\s+", " ", page or "")
+    for label in ("Release Date (Theaters)", "Release Date (Streaming)"):
+        y = _label_year(flat, label)
+        if y:
+            return y
+    m = re.search(r'"dateCreated" ?: ?"((?:19|20)\d\d)-', flat)
+    return int(m.group(1)) if m else None
+
+
+def keep_year(year, today) -> bool:
+    """Owner rule: this year or the year before, never further back."""
+    return year is not None and today.year - 1 <= year <= today.year
