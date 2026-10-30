@@ -6,8 +6,10 @@ platforms before a release tag.
 
 ```sh
 python3 test_uptime.py && python3 test_quota_windows.py && python3 test_reset_credits.py \
-  && python3 test_no_console_window.py && python3 test_agy_env.py
+  && python3 test_no_console_window.py && python3 test_agy_env.py && python3 test_text_encoding.py
 ```
+
+On Windows, also run `tools/windows_console_check.py` (rule 8) before every release tag.
 
 ## 1. Start child processes only through `_run()` / `_popen()`
 
@@ -82,3 +84,24 @@ backup copy first.
 
 A process started over ssh runs without a desktop: no tray icon, and console-window bugs (rule 1) stay invisible. Start
 it from the desktop (`start-daemon.bat`, the login autostart, or a one-shot interactive scheduled task).
+
+## 8. No window may ever reach the Windows desktop: prove it with `tools/windows_console_check.py`
+
+**Bug (2026-10-31):** rule 1 covers our own children only. `agy` sometimes starts a child that asks Windows for a
+NEW console, and Windows Terminal (the default terminal) shows it as a blank tab or window on the owner's screen.
+`test_no_console_window.py` passed throughout, because it only reads our source.
+
+**Rule:** before a release tag, run `tools/windows_console_check.py` on the Windows host from the desktop session
+(one-shot interactive scheduled task, with the venv's `pythonw.exe`, as its docstring shows). It runs every
+program-starting path the host has enabled, three rounds, and must end `RESULT: PASS`. A new spawn site gets a
+`PATHS` entry in the tool in the same commit. A path whose window comes from a third-party grandchild we cannot
+reach (today: `agy`) is turned off on a Windows host whose units another daemon already feeds
+(`"antigravity_enabled": false`), not tolerated.
+
+## 9. Read and write every text file as UTF-8
+
+**Bug (2026-10-31):** files were read and written in the locale codec, cp874 on the Thai-locale Windows host, which
+cannot hold Japanese: saving the translate cache raised `UnicodeEncodeError` for every non-Latin calendar title.
+**Rule:** pass `encoding="utf-8"` to every `read_text`/`write_text`/`open` in text mode; state files are read with
+`_read_text()`, which falls back to the locale codec for files an older daemon wrote. **Guard:**
+`test_text_encoding.py`.
