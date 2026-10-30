@@ -2529,7 +2529,11 @@ def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
             ucfg = r.json() if r.status_code == 200 else None
         except (httpx.HTTPError, ValueError):
             ucfg = None
-        if not isinstance(ucfg, dict) or not ucfg.get("carouselMovies"):
+        if not isinstance(ucfg, dict):
+            continue
+        mode = ucfg.get("mode", "carousel")
+        # On screen when the unit shows ONLY the Movies page, or rotates with Movies ticked.
+        if not (mode == "movies" or (mode == "carousel" and ucfg.get("carouselMovies"))):
             continue
         sources = {s for s, k in (("theaters", "moviesTheaters"), ("home", "moviesHome"))
                    if ucfg.get(k, True)}
