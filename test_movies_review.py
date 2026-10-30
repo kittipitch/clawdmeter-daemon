@@ -56,4 +56,17 @@ assert len(logged) == 1, logged
 d._movies_ok("http://u1")
 d._movies_problem("http://u1", "push", "Movies push http://u1 HTTP 400")
 assert len(logged) == 2, logged
+
+# Audit gap: movies_tick must route the unit URL through _resolve_url_for_push like every other push
+# loop (mDNS .local names are slow or flaky; the resolver maps them to an IP). A name only the
+# resolver knows must still reach the unit, and the state stays keyed by the configured URL.
+import httpx  # noqa: E402
+from test_movies_push import Unit, cache as push_cache, T0 as PT0  # noqa: E402
+u = Unit()
+real = u.url
+fake = "http://movies-test-unit.local/api/usage"
+d._resolve_url_for_push = lambda url: url.replace("http://movies-test-unit.local", real.rsplit("/api/", 1)[0])
+st = d.movies_tick(push_cache, [fake], {}, PT0, httpx)
+assert len(u.frames) == 1 and u.promotes == 1, (len(u.frames), u.promotes)
+assert fake in st
 print("test_movies_review: OK")
