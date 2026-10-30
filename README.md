@@ -118,6 +118,8 @@ python3 --version                                   # must be 3.10+
 claude --version                                    # if "command not found", see the note below
 cp .env.example .env                                # then set CLAWDMETER_PUSH_URL=smalltv-3fa2.local
 ./install.sh                                        # .venv + deps + autostart (macOS: also starts it now)
+# or, with uv (recommended; repo ships pyproject.toml + uv.lock):
+uv sync && uv run --project . python clawdmeter_daemon.py --no-tray ...
 
 # One foreground test run to see the log. It never exits on its own -- read a few
 # lines, then press Ctrl+C. On macOS install.sh has ALREADY started a background

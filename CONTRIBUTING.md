@@ -57,12 +57,17 @@ own machines; nothing in the code or docs may assume particular target names.
 `python3` symlink follows the new interpreter, but its `lib/python3.12/site-packages` is invisible to 3.14, so every
 import failed (`ModuleNotFoundError: httpx`) and the service crash-looped (`activating`). The venv looked intact.
 
-**Rule:** after the OS Python version changes, recreate the venv:
+**Rule:** after the OS Python version changes, recreate the venv. With uv (recommended
+since 2026-10-30; `pyproject.toml` + `uv.lock` live in the repo) this is one command and
+uv's venvs survive OS python drift anyway:
 
 ```sh
-mv .venv .venv.bak_broken && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+uv sync                 # or: mv .venv .venv.bak_broken && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # restart the service, then check the log for the first successful poll
 ```
+
+Run the daemon with `uv run --project <this dir> python clawdmeter_daemon.py ...` so the
+managed venv is always the one used (pi5 + ubuntu_office units do this since 2026-10-30).
 
 **Guard:** none automatic yet -- a crash-looping unit with `ModuleNotFoundError` in its journal is this bug.
 
