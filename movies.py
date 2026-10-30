@@ -160,7 +160,9 @@ def due(rot, now, period_s=PERIOD_S) -> bool:
 # page matches the quota pages exactly (owner 2026-10-31: "poster = pic and the font shud be font").
 POSTER_W, POSTER_H = 160, 240
 POSTER_BYTES = POSTER_W * POSTER_H * 2
-MOVIE_BYTES = POSTER_BYTES + 8     # + trailer: 'M','V', tomatometer, popcorn, year LE, source, 0
+TITLE_BYTES = 64
+MOVIE_BYTES = POSTER_BYTES + 8 + TITLE_BYTES   # + trailer: 'M','V', tomatometer, popcorn, year LE, source,
+                                               #   title length, then the ASCII title zero-padded to 64
 COLUMN_RGB = (0x1F, 0x1F, 0x1E)    # the firmware's C_PANEL (kept for reference/tests)
 
 
@@ -180,8 +182,15 @@ def _score_byte(v):
     return 255 if v is None else max(0, min(100, int(v)))
 
 
+def ascii_title(title: str) -> str:
+    """The title in the device font's range: accents folded, other symbols dropped, spaces collapsed."""
+    import unicodedata
+    folded = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
+    return " ".join("".join(c if c.isprintable() else " " for c in folded).split())[:TITLE_BYTES]
+
+
 def pack_movie(poster_jpeg: bytes, tile, year: int):
-    """Poster 160x240 RGB565 + 8-byte trailer, or None if the JPEG is unusable."""
+    """Poster 160x240 RGB565 + 72-byte trailer, or None if the JPEG is unusable."""
     import io
     from PIL import Image, ImageOps
     try:
@@ -190,9 +199,10 @@ def pack_movie(poster_jpeg: bytes, tile, year: int):
     except Exception:
         return None
     y = max(0, min(0xFFFF, int(year)))
+    name = ascii_title(tile.title).encode()
     trailer = bytes([ord("M"), ord("V"), _score_byte(tile.tomatometer), _score_byte(tile.popcorn),
-                     y & 0xFF, y >> 8, 0 if tile.source == "theaters" else 1, 0])
-    return rgb565_be(poster) + trailer
+                     y & 0xFF, y >> 8, 0 if tile.source == "theaters" else 1, len(name)])
+    return rgb565_be(poster) + trailer + name.ljust(TITLE_BYTES, b"\0")
 
 
 def frame_hash(frame: bytes) -> str:
