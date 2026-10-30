@@ -51,6 +51,19 @@ from decimal import InvalidOperation
 import httpx
 import aqi as pyaqi
 
+
+def _read_text(path) -> str:
+    """A state/config file as UTF-8, falling back to the locale codec older daemons wrote with (before 2026-10-31 every
+    file was written in it: cp874 on the Thai-locale Windows host, so strict UTF-8 crashed on its Thai titles).
+    Secrets (key and token files) stay strict UTF-8: an undecodable key is no key."""
+    raw = Path(path).read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        import locale
+        return raw.decode(locale.getpreferredencoding(False), "replace")
+
+
 # ---- .env ------------------------------------------------------------------
 # No python-dotenv dependency -- this only ever needs to set a handful of flat
 # KEY=VALUE env vars, so a tiny parser avoids adding a package for it. Values
@@ -61,7 +74,7 @@ import aqi as pyaqi
 def _load_dotenv(path: Path) -> None:
     if not path.is_file():
         return
-    for raw_line in path.read_text().splitlines():
+    for raw_line in _read_text(path).splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -243,6 +256,7 @@ def _popen(cmd, **kw):
     return subprocess.Popen(cmd, **kw)
 
 
+
 # Spawning Claude Code is a last-resort token refresh; never do it more than once
 # per this many seconds, so a failing direct refresh can't pop it every poll.
 _CLAUDE_REFRESH_COOLDOWN = 900
@@ -276,7 +290,7 @@ def load_config() -> dict:
         "uptime_targets": [],
     }
     try:
-        cfg.update(json.loads(CONFIG_PATH.read_text()))
+        cfg.update(json.loads(_read_text(CONFIG_PATH)))
     except (OSError, json.JSONDecodeError):
         pass
     # Defensive denylist, not an expected path: every real credential in
@@ -297,7 +311,7 @@ def load_config() -> dict:
 
 def save_config(cfg: dict) -> None:
     try:
-        CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+        CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     except OSError as e:
         log(f"Could not save config: {e}")
 
@@ -471,7 +485,7 @@ uptime_state = State()
 
 def _read_credentials_file() -> dict | None:
     try:
-        return json.loads(CREDENTIALS_PATH.read_text())
+        return json.loads(_read_text(CREDENTIALS_PATH))
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -479,7 +493,7 @@ def _read_credentials_file() -> dict | None:
 def _write_credentials_file(data: dict) -> None:
     try:
         tmp = CREDENTIALS_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp.replace(CREDENTIALS_PATH)
         try:
             os.chmod(CREDENTIALS_PATH, 0o600)   # holds an OAuth token; readable by us only
@@ -613,8 +627,7 @@ def read_token() -> str | None:
     file_path = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN_FILE", "").strip()
     if file_path:
         try:
-            with open(file_path) as f:
-                tok = f.read().strip()
+            tok = Path(file_path).read_text(encoding="utf-8").strip()
             if tok:
                 _auth_hint = ""
                 return tok
@@ -829,7 +842,7 @@ def poller_loop(interval: float) -> None:
 
 def _read_google_client() -> dict | None:
     try:
-        data = json.loads(GOOGLE_CLIENT_PATH.read_text())
+        data = json.loads(_read_text(GOOGLE_CLIENT_PATH))
     except (OSError, json.JSONDecodeError):
         return None
     if isinstance(data, dict) and data.get("client_id") and data.get("client_secret"):
@@ -839,7 +852,7 @@ def _read_google_client() -> dict | None:
 
 def _read_google_token() -> dict | None:
     try:
-        return json.loads(GOOGLE_TOKEN_PATH.read_text())
+        return json.loads(_read_text(GOOGLE_TOKEN_PATH))
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -847,7 +860,7 @@ def _read_google_token() -> dict | None:
 def _write_google_token(data: dict) -> None:
     try:
         tmp = GOOGLE_TOKEN_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp.replace(GOOGLE_TOKEN_PATH)
         try:
             os.chmod(GOOGLE_TOKEN_PATH, 0o600)   # holds a refresh token; readable by us only
@@ -907,7 +920,7 @@ def _refresh_google_token(tok: dict, client: dict) -> str | None:
 
 def _read_google_service_account() -> dict | None:
     try:
-        data = json.loads(_google_service_account_path().read_text())
+        data = json.loads(_read_text(_google_service_account_path()))
     except (OSError, json.JSONDecodeError):
         return None
     if isinstance(data, dict) and data.get("type") == "service_account" and data.get("client_email"):
@@ -1466,7 +1479,7 @@ TRANSLATE_CALL_SPACING_SEC = 1.5     # pace real translate-shell calls -- a cold
 
 def _load_translate_cache() -> dict[str, str]:
     try:
-        return json.loads(TRANSLATE_CACHE_PATH.read_text())
+        return json.loads(_read_text(TRANSLATE_CACHE_PATH))
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -1474,7 +1487,7 @@ def _load_translate_cache() -> dict[str, str]:
 def _save_translate_cache(cache: dict[str, str]) -> None:
     try:
         tmp = TRANSLATE_CACHE_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+        tmp.write_text(json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(TRANSLATE_CACHE_PATH)
     except OSError as e:
         log(f"Calendar: could not persist translate cache: {e}")
@@ -2586,7 +2599,7 @@ def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
 def movies_push_loop(stop: threading.Event, targets_fn, cache, state_path: Path) -> None:
     log("Movies: Rotten Tomatoes Certified Fresh, one movie an hour per unit")
     try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state = json.loads(_read_text(state_path))
     except (OSError, ValueError):
         state = {}
     while not stop.is_set():
@@ -4878,7 +4891,7 @@ def _mac_autostart_install() -> str:
     )
     p = _mac_plist_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(plist)
+    p.write_text(plist, encoding="utf-8")
     # Reload so it also starts now; unload first so re-install is idempotent.
     _run(["launchctl", "unload", "-w", str(p)], capture_output=True, text=True)
     _run(["launchctl", "load", "-w", str(p)], capture_output=True, text=True)
@@ -4931,7 +4944,7 @@ def _linux_autostart_install() -> str:
     )
     p = _linux_desktop_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
+    p.write_text(content, encoding="utf-8")
     return (f"Autostart on: wrote {p}\n"
             "It starts at your next graphical login (or run start-daemon.sh now).")
 
@@ -4974,7 +4987,7 @@ def _resolve_openrouter_api_key(cli_key: str | None) -> str:
     openrouter_key_path = os.path.expanduser("~/.openrouter_dot_ai_key")
     if os.path.isfile(openrouter_key_path):
         try:
-            key = Path(openrouter_key_path).read_text().strip()
+            key = Path(openrouter_key_path).read_text(encoding="utf-8").strip()
         except OSError:
             return ""
         if key:

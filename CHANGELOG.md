@@ -2,6 +2,13 @@
 
 ## v1.0.0-kitt37 (2026-10-31)
 
+- **Fixed: non-Latin calendar titles on Windows.** Every text file is now read and written as UTF-8 (files from an
+  older daemon still load). Before, a Thai-locale Windows box wrote in cp874 and saving the translate cache failed for
+  every Japanese or other non-Thai title. Guard: `test_text_encoding.py`.
+- **Windows: `tools/windows_console_check.py`** proves no window reaches the desktop (CONTRIBUTING.md rule 8). It
+  found that `agy` itself can open a blank Windows Terminal tab; turn Antigravity off on a Windows host whose units
+  another daemon already feeds.
+
 - **Movies page (`--movies`).** Rotten Tomatoes Certified Fresh movies in theaters and at home,
   released this year or last, one an hour per unit, in list order and never random. The daemon
   sends the poster (160x240 RGB565) plus a 72-byte trailer (Tomatometer, Popcorn score, release
