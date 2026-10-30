@@ -2521,7 +2521,9 @@ def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
     import movies
     state = dict(state or {})
     for url in targets:
-        base = _unit_base(url)
+        # Same .local -> IP mapping as every other push loop (mDNS is slow/flaky); state stays keyed by
+        # the configured URL, so an IP change does not lose the unit's place in its round.
+        base = _unit_base(_resolve_url_for_push(url))
         try:
             r = http.get(base + "/api/config", timeout=10.0)
             ucfg = r.json() if r.status_code == 200 else None
