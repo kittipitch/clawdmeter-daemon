@@ -602,12 +602,26 @@ def _read_token_keychain() -> str | None:
 def read_token() -> str | None:
     """Return a Claude OAuth token.
 
-    Prefers CLAUDE_CODE_OAUTH_TOKEN — a long-lived token from `claude setup-token`,
-    the robust choice for an always-on daemon. Otherwise falls back to the
-    credentials Claude Code stores on disk (which expire and, for some subscription
-    logins, carry no refresh token, so they can't be renewed headlessly).
+    Prefers CLAUDE_CODE_OAUTH_TOKEN_FILE (a file whose only content is the token —
+    keeps the secret out of systemd EnvironmentFile), then CLAUDE_CODE_OAUTH_TOKEN —
+    a long-lived token from `claude setup-token`, the robust choice for an always-on
+    daemon. Otherwise falls back to the credentials Claude Code stores on disk (which
+    expire and, for some subscription logins, carry no refresh token, so they can't be
+    renewed headlessly).
     """
     global _auth_hint
+    file_path = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN_FILE", "").strip()
+    if file_path:
+        try:
+            with open(file_path) as f:
+                tok = f.read().strip()
+            if tok:
+                _auth_hint = ""
+                return tok
+            _auth_hint = f"{file_path} is empty"
+        except OSError as e:
+            _auth_hint = f"{file_path}: {e.__class__.__name__}"
+
     env_tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
     if env_tok:
         _auth_hint = ""

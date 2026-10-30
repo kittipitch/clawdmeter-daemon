@@ -282,7 +282,10 @@ The daemon needs a Claude token. In order it tries:
 > (Codex, Copilot, Calendar OAuth, Antigravity), plus the PATH/environment traps that make a
 > service manager silently report no data.
 
-1. **`CLAUDE_CODE_OAUTH_TOKEN`** env var — a **long-lived token** from
+1. **`CLAUDE_CODE_OAUTH_TOKEN_FILE`** env var — path to a file whose only content is
+   the token (recommended: `~/.config/clawdmeter/claude.token`, mode 600). Preferred
+   form: the systemd `EnvironmentFile` then holds a path, never the secret.
+   **`CLAUDE_CODE_OAUTH_TOKEN`** env var — the token inline, a **long-lived token** from
    `claude setup-token`. This is the robust choice for an always-on daemon: it
    doesn't expire, so there's nothing to refresh.
 2. macOS Keychain, or `~/.claude/.credentials.json` on Linux and Windows (run `claude`
