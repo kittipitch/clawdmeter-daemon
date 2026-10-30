@@ -264,6 +264,34 @@ the daemon still runs, just headless. `.local` addresses need `avahi-daemon` run
   Raspberry Pi or server with no desktop — use a `systemd --user` service plus
   `loginctl enable-linger` instead; full recipe:
   <https://kittipitch.github.io/smalltv-mod/getting-started/keep-it-running/>.
+- **Making autostart PUSH (not just serve)**: the Run-key/LaunchAgent entry starts
+  `--tray` only — the tray defaults to serve mode until switched from its menu. To have
+  the login autostart feed your SmallTV with no click:
+
+  ```powershell
+  # Windows — append --push to the autostart entry
+  $k = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+  $v = (Get-ItemProperty $k).clawdmeter
+  if ($v -notmatch "--push") { Set-ItemProperty $k -Name clawdmeter -Value ($v.TrimEnd() + " --push") }
+  ```
+
+  macOS/Linux: edit the LaunchAgent plist / `.desktop` `Exec=` line the same way —
+  add `--push` after `--tray`. Re-login (or reboot) to verify it survives.
+
+  **Undo (back to serve-on-login):**
+
+  ```powershell
+  # Windows — strip the flag again
+  $k = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+  Set-ItemProperty $k -Name clawdmeter -Value ((Get-ItemProperty $k).clawdmeter -replace "\s+--push\b", "")
+  ```
+
+  macOS/Linux: delete `--push` from the plist/`Exec=` line. Both directions take effect
+  at the NEXT login; the currently running daemon keeps its own mode until restarted.
+  Note: with `--push` in autostart AND another daemon (e.g. a Raspberry Pi) feeding the
+  same SmallTV, the device gets pushes from both — last write wins.
+- **Uninstalling**: `uninstall.bat` (Windows) / `./uninstall.sh` (macOS) —
+  removes the autostart registration and stops the running daemon.
 - **Uninstalling**: `uninstall.bat` (Windows) / `./uninstall.sh` (macOS) —
   removes the autostart registration and stops the running daemon.
 - **Full flag reference, Google Calendar / Weather setup, troubleshooting**:
