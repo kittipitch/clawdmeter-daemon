@@ -2375,18 +2375,12 @@ def album_frame(path: Path) -> bytes | None:
             im.thumbnail((ALBUM_W, ALBUM_H), Image.LANCZOS)
             frame = Image.new("RGB", (ALBUM_W, ALBUM_H), (0, 0, 0))
             frame.paste(im, ((ALBUM_W - im.width) // 2, (ALBUM_H - im.height) // 2))
-            rgb = frame.tobytes()
     except Exception as e:                      # unreadable/corrupt picture
         log(f"Album: skipping {path.name}: {e}")
         return None
 
-    out = bytearray(ALBUM_BYTES)
-    for i in range(ALBUM_W * ALBUM_H):
-        r = rgb[3 * i]; g = rgb[3 * i + 1]; b = rgb[3 * i + 2]
-        v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-        out[2 * i] = v >> 8                     # big-endian: the firmware bswaps per row
-        out[2 * i + 1] = v & 0xFF
-    data = bytes(out)
+    from movies import rgb565_be               # one RGB565 packer for the album and the movies page
+    data = rgb565_be(frame)                     # big-endian: the firmware bswaps per row
     try:
         ALBUM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = hit.with_suffix(".tmp")
