@@ -4,9 +4,10 @@
 
 - **Movies page (`--movies`).** Rotten Tomatoes Certified Fresh movies in theaters and at home,
   released this year or last, one an hour per unit, in list order and never random. The daemon
-  paints the whole frame (poster, Tomatometer, Popcorn score, release year, where it is showing)
-  in the device's own pixel font and pushes it to the new `/api/movie` route; each unit's own
-  Movies settings decide what it gets. New module `movies.py`, tests `test_movies_*.py`.
+  sends the poster (160x240 RGB565) plus an 8-byte trailer (Tomatometer, Popcorn score, release
+  year, in theaters or at home) to the new `/api/movie` route and switches it on screen with
+  `/api/movie/promote`; the device draws the text in its own font. Each unit's own Movies settings
+  decide what it gets. New module `movies.py`, tests `test_movies_*.py`.
 
 ## v1.0.0-kitt36 (2026-10-27)
 
