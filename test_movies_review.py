@@ -69,4 +69,16 @@ d._resolve_url_for_push = lambda url: url.replace("http://movies-test-unit.local
 st = d.movies_tick(push_cache, [fake], {}, PT0, httpx)
 assert len(u.frames) == 1 and u.promotes == 1, (len(u.frames), u.promotes)
 assert fake in st
+
+# Standalone Movies mode: the unit shows only the Movies page; the daemon must push to it even though the
+# carousel checkbox is irrelevant there. A unit showing another single page gets nothing.
+solo = Unit(movies_on=False)
+solo.cfg["mode"] = "movies"
+d._resolve_url_for_push = lambda url: url
+st = d.movies_tick(push_cache, [solo.url], {}, PT0, httpx)
+assert len(solo.frames) == 1, len(solo.frames)
+other = Unit(movies_on=True)
+other.cfg["mode"] = "agenda"
+st = d.movies_tick(push_cache, [other.url], {}, PT0, httpx)
+assert other.frames == [], len(other.frames)
 print("test_movies_review: OK")
