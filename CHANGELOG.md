@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.0-kitt38 (2026-11-01)
+
+- **Anime on the Movies page.** MyAnimeList's current and previous season (found from MAL's own season
+  page), interleaved hour by hour with the Rotten Tomatoes movies. Each unit's settings pick anime movies
+  and/or series (TV, ONA, OVA), romaji or English titles, and a star threshold (default 7.5); every show
+  also needs 50,000 members, and long-running ("TV (Continuing)"), special, adult and kids titles are left
+  out. Anime frames use the same 76,872-byte upload with source 2 (movie) or 3 (series): score in
+  hundredths, members in thousands, and the season label after the title. New module `anime.py`, tests
+  `test_anime_*.py`. Needs firmware v1.0.0-kitt38 or later; old firmware and old state files keep working.
+
 ## v1.0.0-kitt37 (2026-10-31)
 
 - **Fixed: non-Latin calendar titles on Windows.** Every text file is now read and written as UTF-8 (files from an
