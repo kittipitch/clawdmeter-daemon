@@ -16,10 +16,9 @@ culprit). A path that is not set up on this machine (no codex login, no trans) i
 The report ends with RESULT: PASS (no new windows) or RESULT: FAIL, then DONE. The tray's own "Edit targets"
 dialog and the calendar OAuth browser are meant to be windows and are not exercised.
 
-Known: `agy` (Antigravity) itself sometimes starts a child that asks Windows for a NEW console, which Windows
-Terminal (the default terminal) opens as a blank tab/window; CREATE_NO_WINDOW cannot reach a grandchild. Seen
-2026-10-31 on the first agy call of a process, about half the time. On a Windows host whose units another daemon
-already feeds Antigravity, set antigravity_enabled false there.
+Found with it on 2026-10-31: agy's auto-updater launched a background agy whose child got a new console, which
+Windows Terminal showed as a blank window. Fixed by AGY_CLI_DISABLE_AUTO_UPDATE=true in _agy_env(). The way to
+investigate a window like that is in CONTRIBUTING.md rule 8.
 """
 import ctypes
 import ctypes.wintypes as W
