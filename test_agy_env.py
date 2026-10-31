@@ -1,4 +1,9 @@
-"""_agy_env(): Linux/macOS force agy's token-file path; Windows must not (Credential Manager)."""
+"""_agy_env(): Linux/macOS force agy's token-file path; Windows must not (Credential Manager).
+
+Windows also turns off agy's auto-updater: on 2026-10-31 its log showed "Spawned background update process" on 22 of
+58 daemon-started agy runs, and that background agy's own child got a new console that Windows Terminal showed as a
+blank window (the owner's flashing terminal). Only the exact value "true" works ("1" and "TRUE" did not, tested live
+against agy's log on the Windows host)."""
 
 import importlib
 import os
@@ -25,9 +30,11 @@ try:
     module.sys.platform = "linux"
     env = module._agy_env()
     assert env.get("SSH_CONNECTION"), "Linux: SSH_CONNECTION must be set (skip the keyring)"
+    assert "AGY_CLI_DISABLE_AUTO_UPDATE" not in env, "Linux/macOS: agy keeps updating itself"
     module.sys.platform = "win32"
     env = module._agy_env()
     assert "SSH_CONNECTION" not in env and "SSH_CLIENT" not in env, "Windows: no SSH_* (Credential Manager)"
+    assert env.get("AGY_CLI_DISABLE_AUTO_UPDATE") == "true", "Windows: agy's updater opens a blank terminal"
 finally:
     module.sys.platform = real
     os.environ.pop("SSH_CLIENT", None)

@@ -3605,7 +3605,7 @@ def _agy_version():
     if not agy_bin:
         return None
     try:
-        out = _run([agy_bin, "--version"], capture_output=True, text=True, timeout=15).stdout
+        out = _run([agy_bin, "--version"], capture_output=True, text=True, timeout=15, env=_agy_env()).stdout
     except (OSError, subprocess.TimeoutExpired):
         return None
     m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
@@ -3717,11 +3717,16 @@ def _agy_env() -> dict:
     poll_antigravity(): a locked keyring stalls 5 s + 10 s per run). Windows is the opposite:
     agy keeps its login in Credential Manager and writes no token file, so an SSH_CONNECTION
     sends it to a login prompt that times out after 60 s. There, drop any inherited SSH_*
-    variables (a daemon started from an ssh shell would carry them)."""
+    variables (a daemon started from an ssh shell would carry them).
+
+    Windows also turns off agy's auto-updater (exact value "true"; "1" does not work): it launched a background agy
+    whose own child got a new console, which Windows Terminal showed as a blank window on about every other poll
+    (CONTRIBUTING.md rule 8). agy still updates whenever the user runs it themselves."""
     env = dict(os.environ)
     if sys.platform == "win32":
         for k in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"):
             env.pop(k, None)
+        env["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
     else:
         env.setdefault("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")
     return env
