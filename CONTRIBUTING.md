@@ -87,16 +87,26 @@ it from the desktop (`start-daemon.bat`, the login autostart, or a one-shot inte
 
 ## 8. No window may ever reach the Windows desktop: prove it with `tools/windows_console_check.py`
 
-**Bug (2026-10-31):** rule 1 covers our own children only. `agy` sometimes starts a child that asks Windows for a
-NEW console, and Windows Terminal (the default terminal) shows it as a blank tab or window on the owner's screen.
-`test_no_console_window.py` passed throughout, because it only reads our source.
+**Bug (2026-10-31):** rule 1 covers our own children only. `agy`'s auto-updater launched a background `agy` whose own
+child got a NEW console, and Windows Terminal (the default terminal) showed it as a blank window, on about every
+other poll and at every login. `test_no_console_window.py` passed throughout, because it only reads our source.
+Fix: `_agy_env()` sets `AGY_CLI_DISABLE_AUTO_UPDATE=true` on Windows (rule 2; guard `test_agy_env.py`).
 
 **Rule:** before a release tag, run `tools/windows_console_check.py` on the Windows host from the desktop session
 (one-shot interactive scheduled task, with the venv's `pythonw.exe`, as its docstring shows). It runs every
 program-starting path the host has enabled, three rounds, and must end `RESULT: PASS`. A new spawn site gets a
-`PATHS` entry in the tool in the same commit. A path whose window comes from a third-party grandchild we cannot
-reach (today: `agy`) is turned off on a Windows host whose units another daemon already feeds
-(`"antigravity_enabled": false`), not tolerated.
+`PATHS` entry in the tool in the same commit.
+
+**When a window does appear, find its source like this** (each step was needed on 2026-10-31):
+1. Watch from the desktop session, never over ssh (an ssh session has no desktop, so nothing shows). Log every new
+   visible top-level window with its owner's parent chain and the processes started in the second before it.
+2. Prove the watcher sees windows first: a one-shot task running `cmd.exe /c ping -n 3 127.0.0.1` must be logged.
+3. A window owned by a process whose chain reaches the daemon is ours, even three levels down. The class is often
+   `PseudoConsoleWindow` with `OpenConsole.exe` just started: that is Windows Terminal hosting a new console.
+4. Read the third-party tool's own log at that second (agy: `~/.gemini/antigravity-cli/log/`); its PID lines name
+   the child that did it.
+5. Look for an off switch in the tool's flags, settings and binary strings, then prove it A/B against the tool's log
+   with the trigger forced (agy: backdate `last_check.timestamp`), and only then watch the desktop again.
 
 ## 9. Read and write every text file as UTF-8
 
