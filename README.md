@@ -974,6 +974,11 @@ poll to make `agy`'s local server report quota, finds that server's port with **
 empty there), and that costs a small amount per poll. Run `agy update` to leave that path.
 On a newer `agy` a failed `/quota` is never retried as a paid prompt.
 
+**Windows: `agy` can open a blank terminal.** Now and then `agy` starts a helper that asks Windows for a new
+console, and Windows Terminal shows it as an empty tab or window. The daemon cannot hide a window that `agy`'s own
+child opens. If another machine already feeds the same device's Antigravity page, turn it off on the Windows one
+(`--no-antigravity`). `tools/windows_console_check.py` shows whether any window reaches your desktop.
+
 **Install** (native Go binary, no Node/npm needed, auto-updates):
 
 ```bash
