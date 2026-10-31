@@ -70,6 +70,12 @@ def parse_season(page: str) -> list:
     return out
 
 
+def is_season_page(page: str) -> bool:
+    """A real season page (it may still list no show that passes the filters, e.g. the first days of a
+    season before anything is scored) as opposed to a failed or changed page."""
+    return '<h1 class="season_nav">' in page and 'class="anime-header">' in page
+
+
 def previous_season_url(page: str):
     m = _PREV.search(page)
     return m.group(1) if m else None
@@ -128,8 +134,9 @@ class AnimeCache:
             return
         now_page = self._page(SEASON_URL)
         prev_url = previous_season_url(now_page) or season_url_by_date(date.fromtimestamp(self.now()), 1)
-        cur, prev = parse_season(now_page), parse_season(self._page(prev_url))
-        if cur and prev:
+        prev_page = self._page(prev_url)
+        cur, prev = parse_season(now_page), parse_season(prev_page)
+        if is_season_page(now_page) and is_season_page(prev_page):
             # A show on both pages keeps the season it started in (the previous one).
             merged = {s.mal_id: s for s in cur}
             merged.update({s.mal_id: s for s in prev})
