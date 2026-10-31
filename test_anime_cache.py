@@ -70,6 +70,12 @@ def test_long_unicode_title():
     name = t[8:8 + n].decode("ascii")
     assert n <= 56 and "☆" not in name and name.startswith("Mahou Shoujo Madoka"), name
     assert t[8 + n] == 0 and t[9 + n:9 + n + 7] == b"Fall 26"
+    # The longest label ("Summer 26", 9 chars) still fits WITH its closing 0 inside the 64-byte field: the
+    # device only reads a label that ends in a 0 there.
+    t = movies.pack_anime(JPEG, show(season="Summer 26"), "x" * 70)[movies.POSTER_BYTES:]
+    n = t[7]
+    field = t[8:8 + 64]
+    assert field[n] == 0 and field[n + 1:n + 10] == b"Summer 26" and field[n + 10] == 0, (n, field)
 
 
 def test_threshold_and_kinds():
@@ -109,6 +115,26 @@ def test_refresh_keeps_list_on_failure():
     net.down, now[0] = True, T0 + movies.REFRESH_S + 1
     c.refresh()
     assert c.shows({"series", "movie"}, 7.5) == before
+
+
+def test_new_season_with_nothing_scored_yet():
+    # First days of a season: the current page loads fine but no show has a score yet. That is a good
+    # page with no shows, not a failure: last season's shows stay, and no 10-minute re-polling.
+    import re
+    now = [T0]
+    unscored = re.sub(rb'js-score">[^<]*', b'js-score">0', NOW)
+
+    class Fresh(Net):
+        def __call__(self, url):
+            got = Net.__call__(self, url)
+            return unscored if url == anime.SEASON_URL and got else got
+    net = Fresh()
+    c = cache(net, lambda: now[0])
+    c.refresh()
+    assert {s.season for s in c.shows({"series", "movie"}, 7.5)} == {"Summer 26"}
+    now[0] += movies.RETRY_S + 1
+    c.refresh()
+    assert net.calls[anime.SEASON_URL] == 1, net.calls[anime.SEASON_URL]
 
 
 def test_show_page_fetched_once():

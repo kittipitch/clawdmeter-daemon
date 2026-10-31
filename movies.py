@@ -205,7 +205,7 @@ def pack_movie(poster_jpeg: bytes, tile, year: int):
     return rgb565_be(poster) + trailer + name.ljust(TITLE_BYTES, b"\0")
 
 
-ANIME_TITLE_MAX = 56   # leaves room in the 64-byte field for "\0" + a season label like "Summer 26"
+ANIME_TITLE_MAX = 53   # 64-byte field = title + 0 + label (up to 9: "Summer 26") + its closing 0
 
 
 def pack_anime(poster_jpeg: bytes, show, title: str):
