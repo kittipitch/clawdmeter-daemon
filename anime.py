@@ -84,3 +84,104 @@ def season_url_by_date(d, back: int) -> str:
 def english_title(page: str):
     m = re.search(r'class="title-english[^"]*">([^<]+)<', page)
     return html.unescape(m.group(1)).strip() if m else None
+
+
+# ---- fetching and caching --------------------------------------------------------------------
+SHOW_URL = "https://myanimelist.net/anime/{id}"
+
+
+class AnimeCache:
+    """This season's and last season's shows, English titles and posters on disk under `root`/anime.
+    `fetch(url) -> bytes | None` is the only network access (injected, so tests run offline); `now()` is the
+    clock. Refresh cadence and retry follow the RT lists (movies.REFRESH_S / movies.RETRY_S)."""
+
+    def __init__(self, root, fetch, now):
+        import json
+        from pathlib import Path
+        self.root, self.fetch, self.now, self._json = Path(root) / "anime", fetch, now, json
+        (self.root / "posters").mkdir(parents=True, exist_ok=True)
+        self._list = self._load("list.json", {"fetched_at": None, "shows": []})
+        self._english = self._load("english.json", {})
+
+    def _load(self, name, default):
+        try:
+            d = self._json.loads((self.root / name).read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else default
+        except (OSError, ValueError):
+            return default
+
+    def _save(self, name, data):
+        p = self.root / name
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(self._json.dumps(data), encoding="utf-8")
+        tmp.replace(p)
+
+    def _page(self, url):
+        raw = self.fetch(url)
+        return raw.decode("utf-8", "replace") if raw else ""
+
+    def refresh(self, force=False):
+        import movies
+        from datetime import date
+        at = self._list.get("fetched_at")
+        if not force and isinstance(at, (int, float)) and self.now() - at < movies.REFRESH_S:
+            return
+        now_page = self._page(SEASON_URL)
+        prev_url = previous_season_url(now_page) or season_url_by_date(date.fromtimestamp(self.now()), 1)
+        cur, prev = parse_season(now_page), parse_season(self._page(prev_url))
+        if cur and prev:
+            # A show on both pages keeps the season it started in (the previous one).
+            merged = {s.mal_id: s for s in cur}
+            merged.update({s.mal_id: s for s in prev})
+            self._list = {"fetched_at": self.now(), "shows": [s.__dict__ for s in merged.values()]}
+        else:   # a page missing or unparsable: keep the last good list, try again in RETRY_S
+            self._list["fetched_at"] = self.now() - movies.REFRESH_S + movies.RETRY_S
+        self._save("list.json", self._list)
+        for s in self._shows():
+            key = str(s.mal_id)
+            if key not in self._english:
+                raw = self.fetch(SHOW_URL.format(id=s.mal_id))
+                if raw is not None:   # "" = page read, no English title (never asked again)
+                    self._english[key] = english_title(raw.decode("utf-8", "replace")) or ""
+        self._save("english.json", self._english)
+        keep = {s.poster_hash for s in self._shows()}
+        for p in (self.root / "posters").glob("*.jpg"):
+            if p.stem not in keep:
+                p.unlink(missing_ok=True)
+
+    def _shows(self):
+        out = []
+        for d in self._list.get("shows") or []:
+            try:
+                out.append(Show(**d))
+            except TypeError:
+                continue
+        return out
+
+    def shows(self, kinds, min_score):
+        """Shows of the asked kinds at or above min_score: movies and series interleaved (movie first),
+        each by members, most first."""
+        lists = [sorted((s for s in self._shows() if s.kind == k and s.score >= min_score),
+                        key=lambda s: -s.members) for k in ("movie", "series") if k in kinds]
+        out = []
+        for i in range(max((len(x) for x in lists), default=0)):
+            out += [lst[i] for lst in lists if i < len(lst)]
+        return out
+
+    def frame_for(self, show, english):
+        """The upload for this show, fetching its poster once per image; None (skip this hour) when the
+        poster cannot be fetched or decoded."""
+        import movies
+        p = self.root / "posters" / f"{show.poster_hash}.jpg"
+        if not p.is_file():
+            raw = self.fetch(show.poster_url)
+            if not raw:
+                return None
+            tmp = p.with_name(p.name + ".tmp")
+            tmp.write_bytes(raw)
+            tmp.replace(p)
+        title = (self._english.get(str(show.mal_id)) if english else "") or show.title
+        frame = movies.pack_anime(p.read_bytes(), show, title)
+        if frame is None:
+            p.unlink(missing_ok=True)
+        return frame

@@ -205,6 +205,29 @@ def pack_movie(poster_jpeg: bytes, tile, year: int):
     return rgb565_be(poster) + trailer + name.ljust(TITLE_BYTES, b"\0")
 
 
+ANIME_TITLE_MAX = 56   # leaves room in the 64-byte field for "\0" + a season label like "Summer 26"
+
+
+def pack_anime(poster_jpeg: bytes, show, title: str):
+    """An anime frame (anime.Show): same size and poster as pack_movie; the trailer carries the MAL score
+    in hundredths and the members in thousands (uint16 LE each), source 2 = anime movie / 3 = series, and
+    the 64-byte field holds the title, a 0 byte, then the season label the device prints in row 3."""
+    import io
+    from PIL import Image, ImageOps
+    try:
+        with Image.open(io.BytesIO(poster_jpeg)) as im:
+            poster = ImageOps.fit(im.convert("RGB"), (POSTER_W, POSTER_H), Image.LANCZOS)
+    except Exception:
+        return None
+    score = max(0, min(0xFFFF, round(show.score * 100)))
+    members = max(0, min(0xFFFF, show.members // 1000))
+    name = ascii_title(title)[:ANIME_TITLE_MAX].rstrip().encode()
+    field = name + b"\0" + ascii_title(show.season).encode()
+    trailer = bytes([ord("M"), ord("V"), score & 0xFF, score >> 8, members & 0xFF, members >> 8,
+                     2 if show.kind == "movie" else 3, len(name)])
+    return rgb565_be(poster) + trailer + field[:TITLE_BYTES].ljust(TITLE_BYTES, b"\0")
+
+
 def frame_hash(frame: bytes) -> str:
     return hashlib.sha256(frame).hexdigest()
 
