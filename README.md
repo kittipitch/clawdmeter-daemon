@@ -1119,6 +1119,23 @@ and [at home](https://www.rottentomatoes.com/browse/movies_at_home/critics:certi
   poster is fetched once (cached in `~/.clawdmeter-movies/`).
 - Needs smalltv-mod v1.0.0-kitt37 or later. Remembered like `--album`; `--no-movies` turns it off.
 
+### Anime on the Movies page (MyAnimeList)
+
+The same page also shows anime from [MyAnimeList](https://myanimelist.net/anime/season): this season
+and the one before (read from MAL's own season page, so it moves on by itself), taking turns with the
+movies hour by hour (movie, anime, movie, anime ...). A show is shown when it has at least the unit's
+star threshold (default 7.5) and 50,000 members. Long-running shows (MAL's "TV (Continuing)"), specials,
+and adult and kids titles are left out.
+
+- On the device, under **Movies**: **Anime movies**, **Anime series** (TV, ONA, OVA), **English anime
+  titles** (off = MAL's main romaji title; a show with no English title keeps its romaji one) and the
+  **star threshold** slider (7.0 to 9.5). A unit with only the anime boxes ticked shows only anime.
+- The card shows a star with the MAL score, the member count (`218K`, `2.7M`) and a film or TV icon
+  with the season (`Fall 26`).
+- The two season pages refresh every 6 hours; each show's page is read once for its English title;
+  posters are fetched once (cached in `~/.clawdmeter-movies/anime/`).
+- Needs smalltv-mod v1.0.0-kitt38 or later; older firmware simply gets no anime.
+
 ## Options
 
 ```

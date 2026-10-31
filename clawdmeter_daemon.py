@@ -2480,8 +2480,8 @@ def album_push_loop(stop: threading.Event, targets_fn, folder: Path, shuffle: bo
 
 
 
-# ---- Movies: Rotten Tomatoes Certified Fresh, one movie an hour per unit -----------------------
-# The logic (parsing, release year, rotation, painting, caching) lives in movies.py; this is the
+# ---- Movies: Rotten Tomatoes Certified Fresh + MyAnimeList anime, one an hour per unit ----------
+# The logic (parsing, release year, rotation, painting, caching) lives in movies.py and anime.py; this is the
 # thread and the device contract. Per unit: read its Movies settings from its own /api/config, and
 # when its hour is up push the next frame to /api/movie, then /api/movie/promote. The daemon owns
 # the clock; a unit that cannot be reached is not advanced.
@@ -2529,8 +2529,47 @@ def _unit_base(push_url: str) -> str:
     return _device_config_url(push_url)[: -len("/api/config")]
 
 
-def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
-    """One pass over every unit; returns the updated state {push_url: {"rotation", "frame_hash"}}."""
+def _movies_pick_rt(cache, rot, sources):
+    """(slug, frame) of the next RT movie for this unit, or (None, None)."""
+    entries = cache.entries(sources) if sources else []
+    if not entries:
+        return None, None
+    years = {t.slug: (t, y) for t, y in entries}
+    # Unseen movies in list order; one whose poster fails is skipped this hour (still unseen, so it is
+    # retried at its next turn).
+    rot.next_slug([t.slug for t, _ in entries])
+    for s in rot.upcoming():
+        frame = cache.frame_for(*years[s])
+        if frame is not None:
+            return s, frame
+    return None, None
+
+
+def _movies_pick_mal(anime, rot, ucfg):
+    """(slug, frame) of the next anime show for this unit, or (None, None). Old firmware has no anime keys:
+    nothing ticked, so no anime."""
+    kinds = {k for k, key in (("movie", "animeMovies"), ("series", "animeSeries")) if ucfg.get(key)}
+    try:
+        min_score = float(ucfg.get("animeMinScore", 75)) / 10
+    except (TypeError, ValueError):
+        min_score = 7.5
+    shows = anime.shows(kinds, min_score) if (anime is not None and kinds) else []
+    if not shows:
+        return None, None
+    by = {f"mal:{s.mal_id}": s for s in shows}
+    rot.next_slug(list(by))
+    for s in rot.upcoming():
+        frame = anime.frame_for(by[s], bool(ucfg.get("animeEnglish")))
+        if frame is not None:
+            return s, frame
+    return None, None
+
+
+def movies_tick(cache, targets, state: dict, now: float, http, anime=None) -> dict:
+    """One pass over every unit; returns the updated state
+    {push_url: {"rotation", "mal_rotation", "last", "frame_hash"}}. Rotten Tomatoes ("rt") and
+    MyAnimeList ("mal") take turns hour by hour (owner 2026-11-01); a kind with nothing for this unit
+    hands its hour to the other."""
     import movies
     state = dict(state or {})
     for url in targets:
@@ -2550,29 +2589,22 @@ def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
             continue
         sources = {s for s, k in (("theaters", "moviesTheaters"), ("home", "moviesHome"))
                    if ucfg.get(k, True)}
-        if not sources:
-            continue
         unit = state.get(url) or {}
-        rot = movies.Rotation.from_dict(unit.get("rotation"))
-        if not movies.due(rot, now):
+        rots = {"rt": movies.Rotation.from_dict(unit.get("rotation")),
+                "mal": movies.Rotation.from_dict(unit.get("mal_rotation"))}
+        last = unit.get("last") if unit.get("last") in rots else "rt"
+        if not movies.due(rots[last], now):
             continue
-        entries = cache.entries(sources)
-        if not entries:
-            _movies_warn_once("empty", "Movies: no movies to show yet (lists empty or all filtered)")
-            continue
-        order = [t.slug for t, _ in entries]
-        years = {t.slug: (t, y) for t, y in entries}
-        # Unseen movies in list order; one whose poster fails is skipped this hour (still unseen, so
-        # it is retried at its next turn).
-        rot.next_slug(order)
-        candidates = rot.upcoming()
-        frame = slug = None
-        for s in candidates:
-            frame = cache.frame_for(*years[s])
+        kind = slug = frame = None
+        fresh = unit.get("last") is None and rots["rt"].shown_at is None   # never shown anything: RT first
+        for k in (("rt", "mal") if fresh or last == "mal" else ("mal", "rt")):
+            slug, frame = (_movies_pick_rt(cache, rots["rt"], sources) if k == "rt"
+                           else _movies_pick_mal(anime, rots["mal"], ucfg))
             if frame is not None:
-                slug = s
+                kind = k
                 break
         if frame is None:
+            _movies_warn_once("empty", "Movies: nothing to show yet (lists empty or all filtered)")
             continue
         fh = movies.frame_hash(frame)
         if fh != unit.get("frame_hash"):
@@ -2590,14 +2622,15 @@ def movies_tick(cache, targets, state: dict, now: float, http) -> dict:
                 _movies_problem(base, "reach", f"Movies: {base} unreachable: {e}")
                 continue
             _movies_ok(base)
-        rot.mark_shown(slug, now)
-        state[url] = {"rotation": rot.to_dict(), "frame_hash": fh}
+        rots[kind].mark_shown(slug, now)
+        state[url] = {"rotation": rots["rt"].to_dict(), "mal_rotation": rots["mal"].to_dict(),
+                      "last": kind, "frame_hash": fh}
         log(f"Movies: {base} now shows {slug}")
     return state
 
 
-def movies_push_loop(stop: threading.Event, targets_fn, cache, state_path: Path) -> None:
-    log("Movies: Rotten Tomatoes Certified Fresh, one movie an hour per unit")
+def movies_push_loop(stop: threading.Event, targets_fn, cache, state_path: Path, anime=None) -> None:
+    log("Movies: Rotten Tomatoes Certified Fresh + MyAnimeList seasons, one an hour per unit")
     try:
         state = json.loads(_read_text(state_path))
     except (OSError, ValueError):
@@ -2605,7 +2638,12 @@ def movies_push_loop(stop: threading.Event, targets_fn, cache, state_path: Path)
     while not stop.is_set():
         try:
             cache.refresh_lists()
-            new = movies_tick(cache, targets_fn(), state, time.time(), httpx)
+            if anime is not None:
+                try:   # a MAL problem must not stop the RT movies
+                    anime.refresh()
+                except Exception as e:
+                    _movies_warn_once(f"anime:{type(e).__name__}", f"Movies: anime {type(e).__name__}: {e}")
+            new = movies_tick(cache, targets_fn(), state, time.time(), httpx, anime=anime)
             if new != state:
                 state = new
                 tmp = state_path.with_name(state_path.name + ".tmp")
@@ -5371,10 +5409,12 @@ def main() -> None:
         if movies_targets:
             import movies as _movies
             MOVIES_DIR.mkdir(parents=True, exist_ok=True)
+            import anime as _anime
             movies_cache = _movies.MovieCache(MOVIES_DIR, _movies_fetch, time.time)
+            anime_cache = _anime.AnimeCache(MOVIES_DIR, _movies_fetch, time.time)
             threading.Thread(target=movies_push_loop,
                              args=(threading.Event(), lambda: movies_targets, movies_cache,
-                                   MOVIES_DIR / "state.json"),
+                                   MOVIES_DIR / "state.json", anime_cache),
                              daemon=True).start()
         else:
             log("Movies enabled but no --push-to host configured - nothing to push to")
