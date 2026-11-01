@@ -186,60 +186,14 @@ def _score_byte(v):
     return 255 if v is None else max(0, min(100, int(v)))
 
 
-SAMPLE_ROWS = POSTER_H // 5         # the top 20%: the part of the poster the title is printed over
-COLOR_MARK = 0xC5                   # trailer byte 69: bytes 70..71 hold the title colour (RGB565 LE)
-TITLE_MAX = TITLE_BYTES - 4         # title + its closing 0 stay clear of the three colour bytes
-_RGB_HUES = (0, 30, 60, 120, 240, 300, 360)    # red, orange, yellow, green, blue, purple, red ...
-_ART_HUES = (0, 60, 120, 180, 240, 300, 360)   # ... and where they sit on the art (red-yellow-blue) wheel
-_PURPLE, _YELLOW = (128, 0, 128), (255, 255, 0)
-
-
-def _luminance(c) -> float:
-    f = lambda v: v / 255 / 12.92 if v / 255 <= .03928 else ((v / 255 + .055) / 1.055) ** 2.4
-    return .2126 * f(c[0]) + .7152 * f(c[1]) + .0722 * f(c[2])
-
-
-def _contrast(a, b) -> float:
-    la, lb = sorted((_luminance(a), _luminance(b)), reverse=True)
-    return (la + .05) / (lb + .05)
-
-
-def _map_hue(h, src, dst):
-    for i in range(len(src) - 1):
-        if h <= src[i + 1]:
-            return dst[i] + (h - src[i]) * (dst[i + 1] - dst[i]) / (src[i + 1] - src[i])
-    return dst[-1]
-
-
-def title_color(bg) -> tuple:
-    """The title colour for a poster whose top averages `bg` (owner 2026-11-01): the opposite of bg on the
-    art colour wheel (yellow -> purple, red -> green, blue -> orange). A grey has no opposite hue, so it gets
-    yellow when dark and purple when bright. The colour is then darkened or lightened just enough to reach
-    4.5:1 against bg, the usual minimum for readable text; black or white always reaches it."""
-    import colorsys
-    h, s, v = colorsys.rgb_to_hsv(*[c / 255 for c in bg])
-    if s < .2 or v < .1:
-        base = _YELLOW if _luminance(bg) < .18 else _PURPLE
-    else:
-        opposite = (_map_hue(h * 360, _RGB_HUES, _ART_HUES) + 180) % 360
-        rgb = colorsys.hsv_to_rgb(_map_hue(opposite, _ART_HUES, _RGB_HUES) / 360, 1, 1)
-        base = tuple(round(c * 255) for c in rgb)
-    for step in range(11):
-        for target in (0, 255):
-            c = tuple(round(x + (target - x) * step / 10) for x in base)
-            if _contrast(c, bg) >= 4.5:
-                return c
-    return (0, 0, 0) if _contrast((0, 0, 0), bg) >= _contrast((255, 255, 255), bg) else (255, 255, 255)
-
-
-def title_color_bytes(poster) -> bytes:
-    """Trailer bytes 69..71: the marker, then title_color() of the poster's top 20% as RGB565 LE. The device
-    has no framebuffer to sample (the poster goes to the panel row by row), so the daemon does the sum."""
-    from PIL import ImageStat
-    bg = [round(x) for x in ImageStat.Stat(poster.crop((0, 0, POSTER_W, SAMPLE_ROWS)).convert("RGB")).mean]
-    r, g, b = title_color(bg)
-    v = (r & 0xF8) << 8 | (g & 0xFC) << 3 | b >> 3
-    return bytes([COLOR_MARK, v & 0xFF, v >> 8])
+def band_luma(poster) -> int:
+    """Mean luminance (0..255) of the poster's top 40 rows: the band the device prints the title over.
+    The device has no framebuffer to sample (the poster goes to the panel row by row), so the frame
+    carries the number in its final byte and the title text switches colour on it (owner 2026-11-01:
+    yellow is hard to read on a bright background)."""
+    band = poster.crop((0, 0, POSTER_W, 40)).convert("L")
+    px = band.getdata()
+    return sum(px) // (POSTER_W * 40)
 
 
 def ascii_title(title: str) -> str:
@@ -259,13 +213,13 @@ def pack_movie(poster_jpeg: bytes, tile, year: int):
     except Exception:
         return None
     y = max(0, min(0xFFFF, int(year)))
-    name = ascii_title(tile.title)[:TITLE_MAX].rstrip().encode()
+    name = ascii_title(tile.title)[:TITLE_BYTES - 1].encode()   # the final byte is the band luminance
     trailer = bytes([ord("M"), ord("V"), _score_byte(tile.tomatometer), _score_byte(tile.popcorn),
                      y & 0xFF, y >> 8, 0 if tile.source == "theaters" else 1, len(name)])
-    return rgb565_be(poster) + trailer + name.ljust(TITLE_BYTES - 3, b"\0") + title_color_bytes(poster)
+    return rgb565_be(poster) + trailer + name.ljust(TITLE_BYTES, b"\0")[:-1] + bytes([band_luma(poster)])
 
 
-ANIME_TITLE_MAX = 50   # field = title + 0 + label (up to 9: "Summer 26") + closing 0 + three colour bytes
+ANIME_TITLE_MAX = 52   # field = title + 0 + label (up to 9: "Summer 26") + closing 0 + luminance byte
 
 
 def pack_anime(poster_jpeg: bytes, show, title: str):
@@ -285,7 +239,7 @@ def pack_anime(poster_jpeg: bytes, show, title: str):
     field = name + b"\0" + ascii_title(show.season).encode()
     trailer = bytes([ord("M"), ord("V"), score & 0xFF, score >> 8, members & 0xFF, members >> 8,
                      2 if show.kind == "movie" else 3, len(name)])
-    return rgb565_be(poster) + trailer + field[:TITLE_BYTES - 3].ljust(TITLE_BYTES - 3, b"\0") + title_color_bytes(poster)
+    return rgb565_be(poster) + trailer + field[:TITLE_BYTES - 1].ljust(TITLE_BYTES - 1, b"\0") + bytes([band_luma(poster)])
 
 
 def frame_hash(frame: bytes) -> str:

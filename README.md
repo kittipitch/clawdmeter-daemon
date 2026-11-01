@@ -1109,7 +1109,8 @@ and [at home](https://www.rottentomatoes.com/browse/movies_at_home/critics:certi
   plus **In theaters** and/or **At home**. Each unit decides for itself; the daemon reads the choice
   from that unit's `/api/config`. Changing the boxes takes effect at the next hourly switch: the
   queue keeps its place and simply skips the list you unticked.
-- The daemon sends the poster (160x240) plus the scores, year, source and title; the device draws the title in bold capitals across the top, in the opposite colour of the poster's top 20% (two lines at most) and one
+- The daemon sends the poster (160x240) plus the scores, year, source and title; the device draws the
+  title in yellow across the top (two lines at most) and one
   card with the icons and numbers in its own font, so the page matches the quota pages, and applies the
   unit's colour settings to the poster. It keeps at most two of these (the one on screen and the next). Each unit shows the movies in a random order, one an hour, every
   movie once before any repeats (each round is a fresh shuffle); the place is saved in `~/.clawdmeter-movies/state.json`, so a
