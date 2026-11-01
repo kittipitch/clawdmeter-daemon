@@ -19,7 +19,7 @@ assert movies.MOVIE_BYTES == 160 * 240 * 2 + 72 == 76872
 up = movies.pack_movie(jpeg, tile, 2026)
 assert isinstance(up, bytes) and len(up) == movies.MOVIE_BYTES, len(up or b"")
 assert up[-72:-64] == bytes([ord("M"), ord("V"), 77, 94, 2026 & 0xFF, 2026 >> 8, 0, 8]), list(up[-72:-64])
-assert up[-64:] == b"Clayface" + bytes(56), up[-64:]
+assert up[-64:-1] == b"Clayface" + bytes(55), up[-64:]
 
 home_none = dataclasses.replace(tile, popcorn=None, tomatometer=100, source="home")
 t = movies.pack_movie(jpeg, home_none, 2025)[-72:-64]
@@ -30,8 +30,23 @@ assert t[:7] == bytes([ord("M"), ord("V"), 100, 255, 2025 & 0xFF, 2025 >> 8, 1])
 assert movies.ascii_title("Filipiñana") == "Filipinana"
 assert movies.ascii_title("  Amélie —  Le\tFabuleux ") == "Amelie Le Fabuleux"
 assert movies.ascii_title("x" * 80) == "x" * 64
+# The last trailer byte carries the mean luminance of the poster's top 40 rows (the title band): the
+# device picks the title colour from it, so byte is high on a white poster and low on a black one.
+import io
+from PIL import Image
+
+
+def solid(color):
+    b = io.BytesIO(); Image.new("RGB", (160, 240), color).save(b, "JPEG"); return b.getvalue()
+
+
+white = movies.pack_movie(solid((250, 250, 250)), tile, 2026)
+black = movies.pack_movie(solid((10, 10, 10)), tile, 2026)
+assert white[-1] >= 200 and black[-1] <= 30, (white[-1], black[-1])
+assert white[-64:-1] == b"Clayface" + bytes(55)          # the title never reaches the luminance byte
 long = movies.pack_movie(jpeg, dataclasses.replace(tile, title="Mission: Impossible " * 5), 2026)
-assert len(long) == movies.MOVIE_BYTES and long[-65] == 64 and long[-64:] == ("Mission: Impossible " * 5)[:64].encode()
+assert len(long) == movies.MOVIE_BYTES and long[-65] == 63, long[-65]      # capped one below the field
+assert long[-64:-1] == ("Mission: Impossible " * 5)[:63].encode() and long[-1] > 0
 
 
 def px(f, x, y):

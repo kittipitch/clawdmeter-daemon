@@ -56,7 +56,7 @@ def test_pack_layout():
     assert t[2] | t[3] << 8 == 864
     assert t[4] | t[5] << 8 == 218
     assert t[6] == 3 and t[7] == len("Sousou no Frieren")
-    assert t[8:8 + 64] == b"Sousou no Frieren\0Fall 26".ljust(64, b"\0")
+    assert t[8:8 + 63] == b"Sousou no Frieren\0Fall 26".ljust(63, b"\0")   # byte 63 = band luminance
     assert movies.pack_anime(JPEG, show(kind="movie"), "x")[movies.POSTER_BYTES + 6] == 2
     big = movies.pack_anime(JPEG, show(members=70_000_000), "x")[movies.POSTER_BYTES:]
     assert big[4] | big[5] << 8 == 65535

@@ -186,6 +186,16 @@ def _score_byte(v):
     return 255 if v is None else max(0, min(100, int(v)))
 
 
+def band_luma(poster) -> int:
+    """Mean luminance (0..255) of the poster's top 40 rows: the band the device prints the title over.
+    The device has no framebuffer to sample (the poster goes to the panel row by row), so the frame
+    carries the number in its final byte and the title text switches colour on it (owner 2026-11-01:
+    yellow is hard to read on a bright background)."""
+    band = poster.crop((0, 0, POSTER_W, 40)).convert("L")
+    px = band.getdata()
+    return sum(px) // (POSTER_W * 40)
+
+
 def ascii_title(title: str) -> str:
     """The title in the device font's range: accents folded, other symbols dropped, spaces collapsed."""
     import unicodedata
@@ -203,13 +213,13 @@ def pack_movie(poster_jpeg: bytes, tile, year: int):
     except Exception:
         return None
     y = max(0, min(0xFFFF, int(year)))
-    name = ascii_title(tile.title).encode()
+    name = ascii_title(tile.title)[:TITLE_BYTES - 1].encode()   # the final byte is the band luminance
     trailer = bytes([ord("M"), ord("V"), _score_byte(tile.tomatometer), _score_byte(tile.popcorn),
                      y & 0xFF, y >> 8, 0 if tile.source == "theaters" else 1, len(name)])
-    return rgb565_be(poster) + trailer + name.ljust(TITLE_BYTES, b"\0")
+    return rgb565_be(poster) + trailer + name.ljust(TITLE_BYTES, b"\0")[:-1] + bytes([band_luma(poster)])
 
 
-ANIME_TITLE_MAX = 53   # 64-byte field = title + 0 + label (up to 9: "Summer 26") + its closing 0
+ANIME_TITLE_MAX = 52   # field = title + 0 + label (up to 9: "Summer 26") + closing 0 + luminance byte
 
 
 def pack_anime(poster_jpeg: bytes, show, title: str):
@@ -229,7 +239,7 @@ def pack_anime(poster_jpeg: bytes, show, title: str):
     field = name + b"\0" + ascii_title(show.season).encode()
     trailer = bytes([ord("M"), ord("V"), score & 0xFF, score >> 8, members & 0xFF, members >> 8,
                      2 if show.kind == "movie" else 3, len(name)])
-    return rgb565_be(poster) + trailer + field[:TITLE_BYTES].ljust(TITLE_BYTES, b"\0")
+    return rgb565_be(poster) + trailer + field[:TITLE_BYTES - 1].ljust(TITLE_BYTES - 1, b"\0") + bytes([band_luma(poster)])
 
 
 def frame_hash(frame: bytes) -> str:
