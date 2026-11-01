@@ -14,6 +14,9 @@
   never the same title two turns running), and a title that appears mid-round lands at a random place among
   the unseen ones. RT and MAL still take turns hour by hour. A round already in progress keeps its saved order
   until it ends.
+- **Changed: title colour.** The daemon averages the poster's top 20% and sends the opposite colour on the art
+  colour wheel (yellow -> purple), adjusted to 4.5:1 contrast; a grey top gets yellow when dark, purple when bright.
+  Trailer bytes 69..71 = marker 0xC5 + RGB565. Title caps: 60 (movies), 50 (anime). Needs the re-cut firmware.
 
 ## v1.0.0-kitt37 (2026-10-31)
 
