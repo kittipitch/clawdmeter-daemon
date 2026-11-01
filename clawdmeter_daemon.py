@@ -2534,7 +2534,7 @@ def _movies_pick_rt(cache, rot, sources):
     if not entries:
         return None, None
     years = {t.slug: (t, y) for t, y in entries}
-    # Unseen movies in list order; one whose poster fails is skipped this hour (still unseen, so it is
+    # Unseen movies in round order; one whose poster fails is skipped this hour (still unseen, so it is
     # retried at its next turn).
     rot.next_slug([t.slug for t, _ in entries])
     for s in rot.upcoming():

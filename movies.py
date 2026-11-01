@@ -5,6 +5,7 @@ thread, the CLI flag and the device pushes. Sources (owner-chosen, Certified Fre
 """
 import hashlib
 import html
+import random
 import re
 from dataclasses import dataclass, field
 
@@ -103,11 +104,11 @@ PERIOD_S = 3600  # one movie an hour (owner 2026-10-31), wall clock
 @dataclass
 class Rotation:
     """Where one unit is in its round. Keyed by slug, never by index, so a list that changes order or
-    length cannot skip or repeat a movie. Never random: the round walks a fixed order.
+    length cannot skip or repeat a movie. Shuffled (owner 2026-11-01: "shuffle the poster and dont order
+    by anything"): each round is a fresh random order of every movie that meets the criteria.
 
-    `round` is the order of the round in progress: movies that join the list mid-round go to its END
-    (the theaters list is sorted by popularity, so a new movie usually appears near the top and would
-    otherwise jump the queue); movies that left the list drop out. A new round copies the list order."""
+    `round` is the saved order of the round in progress, so a restart continues it. Movies that join the
+    list mid-round go to a random place among the unseen ones; movies that left the list drop out."""
     current: str | None = None
     shown_at: float | None = None
     seen: list = field(default_factory=list)
@@ -116,12 +117,15 @@ class Rotation:
     def next_slug(self, order):
         if not order:
             return None
-        listed = set(order)
-        rnd = [s for s in self.round if s in listed] + [s for s in order if s not in set(self.round)]
-        seen = set(self.seen)
+        listed, have, seen = set(order), set(self.round), set(self.seen)
+        rnd = [s for s in self.round if s in listed]
+        for s in order:
+            if s not in have:
+                done = sum(1 for x in rnd if x in seen)
+                rnd.insert(random.randint(done, len(rnd)), s)
         unseen = [s for s in rnd if s not in seen]
-        if not unseen:                                  # round finished: start a new one
-            rnd, self.seen = list(order), []
+        if not unseen:                                  # round finished: start a new, reshuffled one
+            rnd, self.seen = random.sample(order, len(order)), []
             if len(rnd) > 1 and rnd[0] == self.current:  # never the same movie two hours running
                 rnd.append(rnd.pop(0))
             unseen = rnd

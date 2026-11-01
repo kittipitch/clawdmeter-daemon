@@ -1112,8 +1112,8 @@ and [at home](https://www.rottentomatoes.com/browse/movies_at_home/critics:certi
 - The daemon sends the poster (160x240) plus the scores, year, source and title; the device draws the
   title in yellow across the top (two lines at most) and one
   card with the icons and numbers in its own font, so the page matches the quota pages, and applies the
-  unit's colour settings to the poster. It keeps at most two of these (the one on screen and the next). Each unit walks the list in order, one movie an hour, every
-  movie once before any repeats; the place is saved in `~/.clawdmeter-movies/state.json`, so a
+  unit's colour settings to the poster. It keeps at most two of these (the one on screen and the next). Each unit shows the movies in a random order, one an hour, every
+  movie once before any repeats (each round is a fresh shuffle); the place is saved in `~/.clawdmeter-movies/state.json`, so a
   restart carries on where it left off.
 - The lists refresh every 6 hours, each movie page is read once for its release year, and each
   poster is fetched once (cached in `~/.clawdmeter-movies/`).
@@ -1123,7 +1123,7 @@ and [at home](https://www.rottentomatoes.com/browse/movies_at_home/critics:certi
 
 The same page also shows anime from [MyAnimeList](https://myanimelist.net/anime/season): this season
 and the one before (read from MAL's own season page, so it moves on by itself), taking turns with the
-movies hour by hour (movie, anime, movie, anime ...). A show is shown when it has at least the unit's
+movies hour by hour (movie, anime, movie, anime ...); the shows come in a random order, each once per round. A show is shown when it has at least the unit's
 star threshold (default 7.5) and 50,000 members. Long-running shows (MAL's "TV (Continuing)"), specials,
 and adult and kids titles are left out.
 

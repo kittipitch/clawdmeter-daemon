@@ -88,7 +88,8 @@ order = [t.slug for t, _ in cache.entries({"theaters", "home"})]
 u = Unit()
 state = d.movies_tick(cache, [u.url], {}, T0, httpx)
 assert len(u.frames) == 1 and u.promotes == 1, (len(u.frames), u.promotes)
-assert state[u.url]["rotation"]["current"] == order[0]
+first = state[u.url]["rotation"]["current"]
+assert first in order and first == state[u.url]["rotation"]["round"][0]
 assert state[u.url]["rotation"]["shown_at"] == T0
 
 # Ten minutes later: nothing.
@@ -98,7 +99,7 @@ assert len(u.frames) == 1
 # An hour later: the next movie.
 state = d.movies_tick(cache, [u.url], state, T0 + 3600, httpx)
 assert len(u.frames) == 2 and u.promotes == 2
-assert state[u.url]["rotation"]["current"] == order[1]
+assert state[u.url]["rotation"]["current"] == state[u.url]["rotation"]["round"][1] != first
 
 # An identical frame is not pushed again (one-movie list, new round, same picture).
 one = movies.MovieCache(Path(tempfile.mkdtemp()), fake_fetch, lambda: T0)
@@ -118,11 +119,12 @@ s2 = d.movies_tick(cache, [u2.url], {}, T0, httpx)
 u2.stop()
 for h in (1, 2, 3):
     s2 = d.movies_tick(cache, [u2.url], s2, T0 + h * 3600, httpx)
-assert s2[u2.url]["rotation"]["current"] == order[0] and s2[u2.url]["rotation"]["shown_at"] == T0
+first2 = s2[u2.url]["rotation"]["current"]
+assert first2 == s2[u2.url]["rotation"]["round"][0] and s2[u2.url]["rotation"]["shown_at"] == T0
 u3 = Unit()                                                     # back, at a new address in this test
 s2[u3.url] = s2.pop(u2.url)
 s2 = d.movies_tick(cache, [u3.url], s2, T0 + 4 * 3600, httpx)
-assert s2[u3.url]["rotation"]["current"] == order[1]
+assert s2[u3.url]["rotation"]["current"] == s2[u3.url]["rotation"]["round"][1]   # the very next one
 
 # Movies off, or both sources off: nothing pushed, nothing recorded.
 for off in (Unit(movies_on=False), Unit(theaters=False, home=False)):
@@ -132,6 +134,6 @@ for off in (Unit(movies_on=False), Unit(theaters=False, home=False)):
 # Two units, different sources, separate rotations in one state.
 ua, ub = Unit(home=False), Unit(theaters=False)
 s = d.movies_tick(cache, [ua.url, ub.url], {}, T0, httpx)
-assert s[ua.url]["rotation"]["current"] == cache.entries({"theaters"})[0][0].slug
-assert s[ub.url]["rotation"]["current"] == cache.entries({"home"})[0][0].slug
+assert s[ua.url]["rotation"]["current"] in {t.slug for t, _ in cache.entries({"theaters"})}
+assert s[ub.url]["rotation"]["current"] in {t.slug for t, _ in cache.entries({"home"})}
 print("test_movies_push: OK")

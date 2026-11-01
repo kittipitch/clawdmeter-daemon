@@ -10,28 +10,33 @@ import movies
 T0 = datetime(2026, 10, 31, 0, 0).timestamp()
 HOUR = 3600
 
-# I4: a movie that appears mid-round joins the END of the round, even when the list puts it first
-# (the theaters list is sorted by popularity, so new movies usually land near the top).
-r = movies.Rotation()
-order = [f"m{i}" for i in range(1, 6)]
-shown = []
-for h in range(3):
-    s = r.next_slug(order); r.mark_shown(s, T0 + h * HOUR); shown.append(s)
-order2 = ["hot"] + order
-for h in range(3, 6):
-    s = r.next_slug(order2); r.mark_shown(s, T0 + h * HOUR); shown.append(s)
-assert shown == ["m1", "m2", "m3", "m4", "m5", "hot"], shown
+# I4 (revised 2026-11-01, rounds are shuffled): a movie that appears mid-round is shown later in the
+# same round, at a random place among the unseen ones, never pinned to the front or the end.
+lasts = 0
+for trial in range(30):
+    r = movies.Rotation()
+    order = [f"m{i}" for i in range(1, 6)]
+    shown = []
+    for h in range(3):
+        s = r.next_slug(order); r.mark_shown(s, T0 + h * HOUR); shown.append(s)
+    order2 = ["hot"] + order
+    for h in range(3, 6):
+        s = r.next_slug(order2); r.mark_shown(s, T0 + h * HOUR); shown.append(s)
+    assert sorted(shown) == sorted(order2), shown
+    lasts += shown[-1] == "hot"
+assert 0 < lasts < 30, lasts
 
 # M1: when a round restarts after a reorder, the movie just shown is not shown again next.
-r = movies.Rotation()
-for s in ["a", "b", "c"]:
-    assert r.next_slug(["a", "b", "c"]) == s; r.mark_shown(s, T0)
-nxt = r.next_slug(["c", "a", "b"])          # new round, and "c" (just shown) is now first
-assert nxt != "c", nxt
+for trial in range(30):
+    r = movies.Rotation()
+    for _ in range(3):
+        s = r.next_slug(["a", "b", "c"]); r.mark_shown(s, T0)
+    nxt = r.next_slug(["c", "a", "b"])      # new round: the movie just shown never comes first
+    assert nxt != r.current, (nxt, r.current)
 
-# Old saved state without a "round" field still works and continues in list order.
+# Old saved state without a "round" field still works: the unseen movies come in a random order.
 r = movies.Rotation.from_dict({"current": "m2", "shown_at": T0, "seen": ["m1", "m2"]})
-assert r.next_slug(order) == "m3"
+assert r.next_slug(order) in {"m3", "m4", "m5"}
 
 # I2: if both list fetches fail (daemon started before the network), retry soon, not in 6 h.
 calls = []

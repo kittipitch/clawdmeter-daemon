@@ -9,6 +9,11 @@
   out. Anime frames use the same 76,872-byte upload with source 2 (movie) or 3 (series): score in
   hundredths, members in thousands, and the season label after the title. New module `anime.py`, tests
   `test_anime_*.py`. Needs firmware v1.0.0-kitt38 or later; old firmware and old state files keep working.
+- **Changed: posters come in a random order.** Rotten Tomatoes movies and MyAnimeList shows that meet the
+  criteria are shuffled: each round is a fresh random order of every qualifying title (each once per round,
+  never the same title two turns running), and a title that appears mid-round lands at a random place among
+  the unseen ones. RT and MAL still take turns hour by hour. A round already in progress keeps its saved order
+  until it ends.
 
 ## v1.0.0-kitt37 (2026-10-31)
 
@@ -21,7 +26,7 @@
   `tools/windows_console_check.py` proves no window reaches the desktop (CONTRIBUTING.md rule 8).
 
 - **Movies page (`--movies`).** Rotten Tomatoes Certified Fresh movies in theaters and at home,
-  released this year or last, one an hour per unit, in list order and never random. The daemon
+  released this year or last, one an hour per unit, in list order (shuffled since kitt38). The daemon
   sends the poster (160x240 RGB565) plus a 72-byte trailer (Tomatometer, Popcorn score, release
   year, in theaters or at home, and the title as ASCII) to the new `/api/movie` route and switches it on screen with
   `/api/movie/promote`; the device draws the text in its own font. Each unit's own Movies settings
