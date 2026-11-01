@@ -1129,7 +1129,7 @@ and adult and kids titles are left out.
 
 - On the device, under **Movies**: **Anime movies**, **Anime series** (TV, ONA, OVA), **English anime
   titles** (off = MAL's main romaji title; a show with no English title keeps its romaji one) and the
-  **star threshold** slider (7.0 to 9.5). A unit with only the anime boxes ticked shows only anime.
+  **star threshold** menu (5.0, 5.5 ... 9.5). A unit with only the anime boxes ticked shows only anime.
 - The card shows a star with the MAL score, the member count (`218K`, `2.7M`) and a film or TV icon
   with the season (`Fall 26`).
 - The two season pages refresh every 6 hours; each show's page is read once for its English title;
