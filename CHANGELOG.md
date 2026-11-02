@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.0-kitt39 (2026-11-03)
+
+- No daemon code change. This tag keeps the daemon in step with firmware v1.0.0-kitt39, which adds an optional
+  fixed IP per saved network. The daemon finds units over mDNS as before, so a fixed-IP unit needs nothing here.
+
 ## v1.0.0-kitt38 (2026-11-01)
 
 - **Anime on the Movies page.** MyAnimeList's current and previous season (found from MAL's own season
