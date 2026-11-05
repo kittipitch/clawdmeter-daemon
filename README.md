@@ -557,6 +557,28 @@ password (see step 4).
      This is Google's own standard env var name for a service-account key
      path, recognized by their other client libraries too — not invented for
      this project.
+
+   **Daemon on a headless Ubuntu box?** The key does not have to be created there.
+   Do the console clicks on your Mac or Windows machine and copy the file across.
+   [ego lite](https://lite.ego.app/) now works on Windows as well as macOS, so Claude
+   Code or Codex can drive the console in your logged-in browser, which makes getting
+   the key easier ([setup](https://kittipitch.github.io/smalltv-mod/reference/agent-browsers/)).
+   Then, from the folder holding the download:
+
+   ```sh
+   # macOS or Linux: rsync
+   rsync -av --chmod=F600 YOUR-KEY.json user@daemon-host:.clawdmeter-google-service-account.json
+   ```
+
+   ```powershell
+   # Windows: sftp ships with Windows, rsync does not
+   sftp user@daemon-host
+   put YOUR-KEY.json .clawdmeter-google-service-account.json
+   chmod 600 .clawdmeter-google-service-account.json
+   bye
+   ```
+
+   Both land on the daemon's default path with mode 600.
 4. Note the service account's email from the file (`client_email`, looks like
    `something@your-project.iam.gserviceaccount.com`). In
    [Google Calendar](https://calendar.google.com) → your calendar's settings
