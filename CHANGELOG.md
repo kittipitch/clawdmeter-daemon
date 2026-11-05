@@ -2,8 +2,15 @@
 
 ## v1.0.0-kitt39 (2026-11-03)
 
-- No daemon code change. This tag keeps the daemon in step with firmware v1.0.0-kitt39, which adds an optional
-  fixed IP per saved network. The daemon finds units over mDNS as before, so a fixed-IP unit needs nothing here.
+- The daemon finds units over mDNS as before, so a unit on firmware v1.0.0-kitt39's optional fixed IP needs nothing here.
+- **Fixed: one calendar title could show different spellings on different hosts.** The translator can spell a title
+  differently per call and each host cached its first answer. An optional local file,
+  `~/.clawdmeter-translate-overrides.json`, now pins a title's English name on each host; it wins over the translator
+  and the cache.
+- **Changed: Movies reads the first two pages of each Rotten Tomatoes list**, not one, so more qualifying movies join
+  the shuffle.
+- **Docs:** how to watch devices on a home network (`contrib/heartbeat/lan-watch.sh`), and how to get the calendar key
+  from a desktop browser and copy it to a headless host.
 
 ## v1.0.0-kitt38 (2026-11-01)
 
