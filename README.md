@@ -715,11 +715,11 @@ pushing it — confirmed live against a real Thai event
 left untouched (never sent through `trans` at all — cheap local ASCII check
 first).
 
-Bing does not romanize the same title the same way twice (that market came back as
-`REDACTED`, `REDACTED` and `REDACTED` on different calls and hosts), and each host
-caches the first answer it got. To make every host show one name, add the title to
-`TRANSLATE_OVERRIDES` in `clawdmeter_daemon.py`; an entry there wins over `trans` and over the cache
-(the market above is mapped to `REDACTED`).
+Bing does not romanize the same title the same way twice, and each host caches the first answer it got, so
+two hosts can show two spellings of one event. To pin a name, put your own table in
+`~/.clawdmeter-translate-overrides.json` on each host, as `{"<title exactly as in the calendar>": "<English name>"}`.
+An entry there wins over `trans` and over the cache, and an edit applies on the next poll. The file is yours and
+stays on the host; it is not part of this repo..
 
 Install it:
 
