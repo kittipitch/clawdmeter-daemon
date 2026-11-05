@@ -982,6 +982,10 @@ python clawdmeter_daemon.py --uptime --uptime-push --push-to <device>
 heartbeat URL (or any dead-man's-switch service); the daemon then reads that heartbeat's status back
 through this feed. Websites need no client: add them as monitors in the Better Stack dashboard.
 
+**Watching a device on your home network** (a speaker, printer or NAS that cannot run a client)? One
+always-on machine checks it and pings that device's heartbeat only when it answers:
+[watching a device on your home network](contrib/heartbeat/README.md#watching-a-device-on-your-home-network).
+
 ## Antigravity CLI quota (optional, off by default)
 
 Pushes your Google Antigravity (`agy`) account quota to

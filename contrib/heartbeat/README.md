@@ -16,6 +16,7 @@ the resulting status back from Better Stack.
 | `heartbeat-ping.sh` | reads the URL from a private file and calls it with `curl` (10 s timeout, 2 retries) |
 | `heartbeat.service` | systemd *user* unit that runs the script once |
 | `heartbeat.timer` | runs the service 30 s after boot, then every 60 s |
+| `lan-watch.sh` | pings a *device's* heartbeat only if that device answers ([below](#watching-a-device-on-your-home-network)) |
 
 ## Setup (Linux with systemd)
 
@@ -60,10 +61,59 @@ the resulting status back from Better Stack.
 
    The dashboard shows the heartbeat as *up* within a minute.
 
+## Watching a device on your home network
+
+A speaker, printer, NAS or camera cannot run this client, and nothing outside your home can reach it.
+Let one always-on machine (a Raspberry Pi, a server) check it and ping **the device's own heartbeat**
+only when it answers. If the device dies, the pings stop and the service alerts you, naming the device.
+`lan-watch.sh` does this.
+
+1. **Create one heartbeat per device**, named after the device. Suggested values: *period* 15 minutes,
+   *grace* 30 minutes. Home Wi-Fi gear drops off for a minute or two all the time, and a short
+   period turns every dropout into a false alarm.
+
+2. **Give the device a fixed address** with a DHCP reservation in your router, or use its `.local` name
+   if it has one. An address that moves looks exactly like a dead device.
+
+3. **Store each URL privately** on the watching machine, one file per device:
+
+   ```sh
+   umask 077
+   mkdir -p ~/.config/clawdmeter/heartbeats
+   cat > ~/.config/clawdmeter/heartbeats/living-room-speaker.url   # paste the URL, Enter, Ctrl-D
+   ```
+
+4. **Install the script and add a cron line per device** (`crontab -e`), checking every 5 minutes:
+
+   ```sh
+   install -m 755 lan-watch.sh ~/.local/bin/lan-watch.sh
+   ```
+
+   ```cron
+   # A device that serves a web page: use a URL, because it proves the device itself is working.
+   */5 * * * * $HOME/.local/bin/lan-watch.sh living-room-speaker "http://192.168.1.50:8008/setup/eureka_info?params=name"
+   # Anything else: a hostname or address, checked with ping.
+   */5 * * * * $HOME/.local/bin/lan-watch.sh printer 192.168.1.51
+   ```
+
+   The URL above is the local Cast API that answers on a Google Home or Nest Mini.
+
+5. **Check it:** run the command by hand, and the dashboard shows the heartbeat as *up*. Then unplug
+   the device. It should go *down* after about period + grace (45 minutes with the values above).
+
+**One heartbeat per device, not per watcher.** More than one machine can ping the same heartbeat, each
+from its own URL file, and then one being off (a laptop asleep, a dual-boot box in its other OS) raises
+nothing. With a single watcher, if that machine dies every device goes down at once. Give the watcher
+its own heartbeat (the setup above) so you can tell the two apart.
+
+Renaming a device later changes nothing here: the heartbeat name is whatever you typed. With the daemon's
+`--uptime-push`, these heartbeats appear on the device's Status page along with everything else.
+
 ## Other systems
 
 - **cron** (any Unix): `* * * * * $HOME/.local/bin/heartbeat-ping.sh >/dev/null 2>&1`
 - **macOS / Windows:** run the same `curl` against the same URL from `launchd` or Task Scheduler every minute.
+- `lan-watch.sh` runs on macOS too. On Windows run it under WSL: Git Bash calls Windows `ping`, which reads `-c` differently.
 
 ## Troubleshooting
 
