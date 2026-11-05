@@ -1146,7 +1146,7 @@ and [at home](https://www.rottentomatoes.com/browse/movies_at_home/critics:certi
   unit's colour settings to the poster. It keeps at most two of these (the one on screen and the next). Each unit shows the movies in a random order, one an hour, every
   movie once before any repeats (each round is a fresh shuffle); the place is saved in `~/.clawdmeter-movies/state.json`, so a
   restart carries on where it left off.
-- The lists refresh every 6 hours, each movie page is read once for its release year, and each
+- The daemon reads the first two pages of each list (`?page=2` serves both at once). The lists refresh every 6 hours, each movie page is read once for its release year, and each
   poster is fetched once (cached in `~/.clawdmeter-movies/`).
 - Needs smalltv-mod v1.0.0-kitt37 or later. Remembered like `--album`; `--no-movies` turns it off.
 

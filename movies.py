@@ -10,8 +10,8 @@ import re
 from dataclasses import dataclass, field
 
 SOURCES = {
-    "theaters": "https://www.rottentomatoes.com/browse/movies_in_theaters/critics:certified_fresh~sort:popular",
-    "home": "https://www.rottentomatoes.com/browse/movies_at_home/critics:certified_fresh",
+    "theaters": "https://www.rottentomatoes.com/browse/movies_in_theaters/critics:certified_fresh~sort:popular?page=2",
+    "home": "https://www.rottentomatoes.com/browse/movies_at_home/critics:certified_fresh?page=2",
 }
 
 

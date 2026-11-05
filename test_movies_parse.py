@@ -7,6 +7,9 @@ FX = Path(__file__).parent / "fixtures"
 theaters = movies.parse_browse((FX / "rt_theaters.html").read_text(encoding="utf-8"), "theaters")
 home = movies.parse_browse((FX / "rt_home.html").read_text(encoding="utf-8"), "home")
 
+# RT's ?page=2 serves pages 1 and 2 together in one response (owner 2026-11-05: read two pages).
+assert all(u.endswith("?page=2") for u in movies.SOURCES.values()), movies.SOURCES
+
 assert len(theaters) == 28, len(theaters)
 t0 = theaters[0]
 assert (t0.slug, t0.title, t0.tomatometer, t0.popcorn, t0.source) == ("clayface", "Clayface", 77, 94, "theaters"), t0
