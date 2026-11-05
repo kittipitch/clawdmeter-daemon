@@ -1516,7 +1516,8 @@ def _translate_to_english(text: str) -> str:
     translate-shell (`trans`) so the device's own stripNonAscii() doesn't
     have to silently drop it. Confirmed live: ~5.6s/call (network
     round-trip, not CPU) and correctly romanizes rather than mistranslates
-    proper nouns (e.g. a Thai market name "REDACTED" -> "REDACTED", not a literal-meaning translation). Cached per exact title
+    proper nouns (a Thai place name comes back as a romanized name, not a
+    literal-meaning translation). Cached per exact title
     string -- the same title repeats every poll until the event itself
     changes, so an uncached call would re-pay that cost for no reason.
     Only successful translations are cached (mirrors the city-name cache's

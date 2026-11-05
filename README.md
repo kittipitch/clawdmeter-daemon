@@ -709,9 +709,8 @@ whatever ASCII characters happen to remain. If [translate-shell]
 (https://github.com/soimort/translate-shell)'s `trans` command is
 installed and on `PATH`, `poll_calendar()` automatically romanizes/
 translates any title containing a non-ASCII character to English before
-pushing it — confirmed live against a real Thai event
-(`REDACTED`, a market) correctly coming back as
-`REDACTED` rather than a garbled or empty string. English titles are
+pushing it — confirmed live against a real Thai event, which came back
+as a readable English name rather than a garbled or empty string. English titles are
 left untouched (never sent through `trans` at all — cheap local ASCII check
 first).
 
