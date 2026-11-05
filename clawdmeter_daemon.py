@@ -1464,6 +1464,14 @@ _translate_cache: dict[str, str] = {}
 _translate_warned_missing = False
 _translate_fail_until: dict[str, float] = {}   # text -> monotonic time to retry after
 TRANSLATE_CACHE_PATH = Path.home() / ".clawdmeter-translate-cache.json"
+# Fixed English names for titles whose machine romanization is not stable. Bing returns a different
+# spelling for the same Thai title from one call to the next (spellings vary), and every
+# host caches the first spelling it drew, so three hosts showed three names for one event. An entry here
+# wins over `trans`, over the per-host cache and over a missing `trans`, so every host shows the same text.
+# Add a title when the log shows a new non-English event that romanizes unevenly.
+TRANSLATE_OVERRIDES = {
+    "REDACTED": "REDACTED",   # a market
+}
 TRANSLATE_RETRY_SEC = 3.0   # one retry after a refused Bing call (it refuses quick repeats)
 TRANSLATE_FAILED_LABEL = "Not translated"   # shown instead of a title the device cannot draw (fits the 16-char card)
 TRANSLATE_FAIL_BACKOFF_SEC = 300.0   # don't re-pay a 15s timeout every poll for the same title
@@ -1511,6 +1519,8 @@ def _translate_to_english(text: str) -> str:
     the device would otherwise strip the title to leftover punctuation and
     digits. The real title replaces it as soon as a later poll translates it."""
     global _translate_warned_missing
+    if text in TRANSLATE_OVERRIDES:
+        return TRANSLATE_OVERRIDES[text]   # fixed name: same on every host, no network call
     if text in _translate_cache:
         return _translate_cache[text]
     now = time.monotonic()
