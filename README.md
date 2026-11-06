@@ -11,6 +11,10 @@ computer sleeps or the program stops, the device keeps the last numbers and afte
 minutes dims the `CLAUDE` heading to mark the reading stale — which is why the installer
 registers it to start at login.
 
+The "device" can also be a terminal panel instead of a SmallTV: anything that accepts the
+same pushes works (see [What a push target must answer](#what-a-push-target-must-answer)).
+The clawdmeter-tui panel does, so daemon + panel run with no SmallTV at all.
+
 ### Reading this to set someone up? (human helper or AI assistant)
 
 Ask these four questions **before** giving any command. Each one changes the path:
@@ -500,6 +504,24 @@ Every transport delivers the same object:
 - **push:** `POST` to `http://<device>/api/usage`.
 - **serve:** `GET http://host:port/` returns the latest object (`/healthz` too).
 
+### What a push target must answer
+
+The daemon pushes `POST /api/<name>` JSON to every `--push-to` target. It reads settings back
+from the **first** target only, with `GET /api/config`:
+
+```json
+{ "calendar": { "lat": 18.7904, "lon": 98.9847, "ids": "you@gmail.com,team@group.calendar.google.com" } }
+```
+
+- `lat`/`lon`: the weather location. `0,0` or a missing field means unset, and weather stays off.
+- `ids`: calendar ids, comma-separated. Empty falls back to `--calendar-id`.
+- At startup, if `ids` is empty and `--calendar-id` is set, the daemon seeds it once with
+  `POST /api/config` `{"calendar": {"ids": "..."}}` and nothing else, so the target must merge a
+  partial save rather than replace its whole config.
+
+A SmallTV unit answers this from its web UI settings. A terminal panel that keeps its own
+location and calendar ids (clawdmeter-tui does) can stand in for the unit: put it first.
+
 ## Google Calendar (optional, off by default)
 
 **Never set up a Google Cloud service account before? Follow the click-by-click guide:
@@ -614,14 +636,14 @@ password (see step 4).
    [issuetracker.google.com/issues/148804709](https://issuetracker.google.com/issues/148804709)).
    So every time you share a new calendar with the service account, *something*
    has to be told its ID by hand. Instead of editing `--calendar-id` and
-   restarting the daemon, the device's own web UI (Agenda & weather tab →
-   "Calendar ID(s)") accepts the same comma-separated format — the daemon
-   re-reads that field from the device's own `/api/config` on every poll
-   cycle (same pattern as `--weather` already uses for lat/lon), so sharing a
-   calendar and pasting its ID into the device is enough; no restart needed.
-   If both are set, the device's field wins; `--calendar-id` is only used
-   when the device's field is empty (or there's no `--push-to` target to read
-   it from).
+   restarting the daemon, the first push target's own settings take the same
+   comma-separated list — on a SmallTV the web UI's Agenda & weather tab →
+   "Calendar ID(s)"; a terminal panel keeps its own. The daemon re-reads that
+   field from the first target's `/api/config` on every poll cycle (same
+   pattern as `--weather` uses for lat/lon), so sharing a calendar and pasting
+   its ID there is enough; no restart needed. If both are set, the target's
+   field wins; `--calendar-id` is only used when that field is empty (or
+   there's no `--push-to` target to read it from).
 
 If the daemon runs elsewhere (e.g. a headless Pi), copy the key file there
 the same way as the OAuth token below (`scp
@@ -754,9 +776,10 @@ only ever pays that cost once, not on every 300s poll.
 Fetches current temperature, rain probability, WMO weather code, PM2.5, and
 US AQI from [Open-Meteo](https://open-meteo.com/) — free, no API key — and
 pushes them to `http://<device>/api/weather`. The **location comes from
-the device itself**, not a daemon flag: set lat/lon in the device's own web
-UI (Agenda & weather tab), and the daemon reads it back via `GET
-/api/config` each poll.
+the first push target**, not a daemon flag: on a SmallTV, set lat/lon in its
+web UI (Agenda & weather tab); a terminal panel keeps its own. The daemon reads
+it back via `GET /api/config` each poll
+([contract](#what-a-push-target-must-answer)).
 
 ```json
 { "ok": true, "tempC": 26.0, "precipPct": 89, "weatherCode": 53, "pm25": 4.7, "aqi": 38, "city": "Chiang Mai" }
