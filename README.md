@@ -13,7 +13,7 @@ registers it to start at login.
 
 The "device" can also be a terminal panel instead of a SmallTV: anything that accepts the
 same pushes works (see [What a push target must answer](#what-a-push-target-must-answer)).
-The clawdmeter-tui panel does, so daemon + panel run with no SmallTV at all.
+A panel that does lets daemon + panel run with no SmallTV at all.
 
 ### Reading this to set someone up? (human helper or AI assistant)
 
@@ -520,7 +520,7 @@ from the **first** target only, with `GET /api/config`:
   partial save rather than replace its whole config.
 
 A SmallTV unit answers this from its web UI settings. A terminal panel that keeps its own
-location and calendar ids (clawdmeter-tui does) can stand in for the unit: put it first.
+location and calendar ids can stand in for the unit: put it first.
 
 ## Google Calendar (optional, off by default)
 
